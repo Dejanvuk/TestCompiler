@@ -1,2 +1,5 @@
 tc
 test.c
+test.s
+.vscode
+test-compiler

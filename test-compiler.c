@@ -6,22 +6,19 @@
 #include <memory.h>
 #include <string.h>
 
-#define isNumber(X) ((X) >= '0' && (X) <= '9' ? true : false)
+#define isDigit(X) ((X) >= '0' && (X) <= '9' ? true : false)
 #define isAlphanumeric(X) (((X) >= '0' && (X) <= '9') || (((X) >= 'a' && (X) <= 'z') || ((X) >= 'A' && (X) <= 'Z'))) ? true : false)
 #define isLetter(X) ((((X) >= 'a' && (X) <= 'z') || ((X) >= 'A' && (X) <= 'Z')) ? true : false)
 #define isSpace(X) ((X) == ' ' ? true : false)
 #define isEos(X) ((X) == EOF ? true : false) // end of input stream
 #define SRC_DATA 256*256 
+#define MAX_STRING_SIZE 32
+#define MAX_NUMBER_SIZE 32
 
 char* sourceFileName;
-
-char currChar;  // current char read
 char* src;  // pointer to source code string; 
-
-char* tokenName;
-uint16_t tokenValue;
-
-FILE *fptr;
+FILE *fptr; // pointer to source code file
+FILE *ofptr; // pointer to output file
 
 /*
 
@@ -32,7 +29,7 @@ Extended BNF rules
 [] ->  " | () ex. A -> [+ | -] C becomes A -> " | (+ | -) becomes A -> " | B , B -> + | -
 {} -> right recursive production rule ",A,AA,AAA etc 
 
-PROGRAM: STATEMENT
+PROGRAM: STATEMENT ['-1']
 
 STATEMENT:
 	     EXPRESSION_STATEMENT
@@ -40,33 +37,64 @@ STATEMENT:
          | SELECTION_STATEMENT
          | FUNCTION CALL
 
-EXPRESSION_STATEMENT: ["+" | "-"] IDENTIFIER {("+" | "-" | "*" | "/") IDENTIFIER} ";"
+PRIMARY_EXPRESSION: 
+                  TOK_IDENTIFIER 
+                  | NUMBER
 
-BOOLEAN_EXPRESSION: (IDENTIFIER | NUMBER) ("==" | "<=" | "<" | ">=" | ">" | "!=") (IDENTIFIER | NUMBER)
+EXPRESSION_STATEMENT: (PRIMARY_EXPRESSION | PRIMARY_EXPRESSION (TOK_MULT | TOK_DIV | TOK_PLUS | TOK_MINUS) EXPRESSION_STATEMENT) TOK_SMCL
 
-COMPOUND_STATEMENT: "{" {EXPRESSION_STATEMENT} "}"
+BOOLEAN_EXPRESSION: PRIMARY_EXPRESSION ('==' | '<=' | '<' | '>=' | '>' | '!=') PRIMARY_EXPRESSION
 
-SELECTION_STATEMENT: "if" '(' BOOLEAN_EXPRESSION ')' STATEMENT [{"else if" '(' BOOLEAN_EXPRESSION ')' STATEMENT}]  ["else" STATEMENT]
+COMPOUND_STATEMENT: '{' {EXPRESSION_STATEMENT} '}'
+
+SELECTION_STATEMENT: 'if' '(' BOOLEAN_EXPRESSION ')' STATEMENT {'else if' '(' BOOLEAN_EXPRESSION ')' STATEMENT}  ['else' STATEMENT]
+
+FUNCTION_DECLARATION:
 
 FUNCTION_DEFINITION:
 
-FUNCTION CALL: IDENTIFIER "(" [IDENTIFIER | NUMBER | STRING | ARRAY] { IDENTIFIER | NUMBER | STRING | ARRAY} ")" 
+FUNCTION_CALL: TOK_IDENTIFIER '(' [TOK_IDENTIFIER | NUMBER | STRING | ARRAY] { TOK_COMMA (TOK_IDENTIFIER | NUMBER | STRING | ARRAY)} ')' TOK_SMCL
 
-ARRAY: "[" ["+" | "-"] NUMBER {"," ["+" | "-"] NUMBER } "]"
+RETURN: 'return' (TOK_IDENTIFIER | DIGIT | BOOLEAN | POINTER) TOK_SMCL
 
-IDENTIFIER: {LETTER | NUMBER};
+ARRAY: '[' [TOK_PLUS | TOK_MINUS] NUMBER {TOK_COMMA [TOK_PLUS | TOK_MINUS] NUMBER } ']'
 
-STRING: "'" ({LETTER | NUMBER}) "'"
+TOK_IDENTIFIER: {LETTER | DIGIT};
 
-BOOLEAN: "true" | "false"
+STRING: '"' ({LETTER | DIGIT}) '"'
 
-POINTER: "*" {IDENTIFIER}
+BOOLEAN: 'true' | 'false'
+
+POINTER: TOK_MULT {TOK_IDENTIFIER}
+
+NUMBER: 
+      TOK_INT
+      | TOK_DBL
+      | LONG
+
+TOK_INT: DIGIT {DIGIT}
+
+TOK_DBL: TOK_INT TOK_COMMA TOK_INT 'd';
+
+TOK_LONG: TOK_INT TOK_COMMA TOK_INT 'l';
 
 LETTER: 
-      "a" | ... | "z" 
-      | "A" | ... | "Z"
+      'a' | ... | 'z'
+      | 'A' | ... | 'Z'
 
-NUMBER: "0" | ... | "9" 
+DIGIT: '0' | ... | '9'
+
+TOK_MULT: '*'
+
+TOK_DIV: '/'
+
+TOK_PLUS: '+'
+
+TOK_MINUS: '-'
+
+TOK_COMMA: ','
+
+TOK_SMCL: ';'
 
 =======TERMINAL SYMBOLS=======
 [a-zA-Z]
@@ -83,29 +111,109 @@ NUMBER: "0" | ... | "9"
 "(" ")"
 ";"
 "return"
+"main"
 
 
 =======NON-TERMINAL SYMBOLS=======
 
-
-
-
-
-
 */
 
+typedef struct token {
+  int token;
+  int value;
+} Token;
 
-enum Token {
-  tok_eof = EOF,
-  tok_identifier, // [a-zA-Z]\w* ex. x, color, UP
-  tok_keyword, // int, if, while, return, function
-  tok_separator, // }, (, ;
-  tok_operator, // +, <, =
-  tok_literal, // string literal true, 6.02e23, "music" or integer literal [0-9]+
-  tok_comment // /* Retrieves user data */ , // must be negative
+Token currToken = {0,0};
+
+enum { // terminal symbols
+  TOK_EOF = EOF, // -1 
+  TOK_MULT, // *
+  TOK_DIV, // /
+  TOK_PLUS, // +
+  TOK_MINUS, // -
+  TOK_IDENTIFIER, // variable
+  TOK_INT, // int
+  TOK_CURLY_BRACKET_OPEN, // '{'
+  TOK_CURLY_BRACKET_CLOSE, // '{'
+  TOK_SQUARE_BRACKET_CLOSE, // '['
+  TOK_SQUARE_BRACKET_OPEN, // ']'
+  TOK_ROUND_BRACKET_OPEN, // '('
+  TOK_ROUND_BRACKET_CLOSE, // ')'
+  TOK_IF, // 'if'
+  TOK_ELSE_IF, // 'else if'
+  TOK_ELSE, // 'else
+  TOK_SMCL // ';'
 };
 
+enum { 
+    op_PROGRAM,
+    op_STATEMENT,
+    op_EXPRESSION_STATEMENT,
+    op_PLUS,
+    op_MINUS,
+    op_IDENTIFIER,
+    op_INT
+};
 
+typedef struct ast {
+    int op;
+    int value;
+    struct ast* left;
+    struct ast* right;
+} AST;
+
+AST* makeAST(int op, int value, AST* left, AST* right) {
+    AST* e = (AST*) malloc(sizeof(AST));
+
+    if(e == NULL) {
+        printf("could not allocate %zu for AST node\n", sizeof(AST));
+        exit(1);
+    }
+
+    e->op = op;
+    e->value = value;
+    e->left = left;
+    e->right = right;
+    return e;
+}
+
+AST* makeChildlessAST(int op, int value) {
+    return makeAST(op,value, NULL, NULL);
+}
+
+AST* makeOneChildAST(int op, int value, AST* left) {
+    return makeAST(op,value, left, NULL);
+}
+
+AST* makeProgramAST (AST* left, AST* right) {
+  return makeAST(op_PROGRAM, 0, left, right);
+};
+
+AST* makeStatementAST (AST* left) {
+  return makeOneChildAST(op_STATEMENT,0, left);
+};
+
+AST* makeExpressionStatementAST (AST* left) {
+  return makeOneChildAST(op_EXPRESSION_STATEMENT,0, left);
+};
+
+AST* makeArithmeticExpressionAST (int op,AST* left, AST* right) {
+  return makeAST(op, 0, left, right);
+};
+
+AST* makePrimaryExpressionAST () {
+    switch(currToken.token) {
+        case TOK_INT:
+            return makeOneChildAST(op_INT,currToken.value, NULL);
+            break;
+        case TOK_IDENTIFIER:
+            return makeOneChildAST(op_IDENTIFIER,0, NULL);
+            break;
+        default:
+            printf("error: invalid token");
+            exit(1);
+    }
+};
 
 /**
  * ====================LEXER====================
@@ -114,18 +222,73 @@ enum Token {
  */
 
 /**
- * returns the next char from the stream
- */ 
-void getNextChar() {
-    //fread(&currChar, sizeof(char), 1, fptr);
-    currChar = fgetc(fptr);
-}
-
-/**
  * returns the next lexeme from the stream
  */ 
 void getNextToken() {
+    int currChar = fgetc(fptr);
 
+    while (isSpace(currChar) || currChar == '\n' || currChar == '\t' ) // skip white space and newline
+        currChar = fgetc(fptr);
+
+    /*
+    if(currChar == '_' || isAlphanumeric(currChar)) {
+        char str[MAX_STRING_SIZE + 1];
+        // read the whole TOK_IDENTIFIER until space
+        int i = 0;
+        do {
+            str[i++] = currChar;
+            currChar = fgetc(fptr);
+        }
+        while(isAlphanumeric(currChar))
+
+        str[i] = '\0';
+    }
+    */
+
+    if(isDigit(currChar)) { 
+        // read the whole number
+        char intStr[MAX_NUMBER_SIZE];
+
+        int i = 0;
+        do {
+            intStr[i++] = currChar;
+            currChar = fgetc(fptr);
+        }
+        while(isDigit(currChar));
+
+        intStr[i] = '\0';
+
+        ungetc(currChar, fptr); // unread the non-decimal back into the stream
+
+        currToken.token = TOK_INT;
+        currToken.value = atoi(intStr);
+    }
+    else {
+        switch(currChar) {
+        case '+':
+            currToken.token = TOK_PLUS;
+            break;
+        case '-':
+            currToken.token = TOK_MINUS;
+            break;
+        case '*':
+            currToken.token = TOK_MULT;
+            break;
+        case '/':
+            currToken.token = TOK_DIV;
+            break;
+        case TOK_EOF:
+            currToken.token = TOK_EOF;
+            break;
+        case ';':
+            currToken.token = TOK_SMCL;
+            break;
+        default: // error: unrecognised char
+            printf("error: unrecognised character");
+            exit(1);
+
+        }
+    }
 }
 
 /**
@@ -136,8 +299,96 @@ void getNextToken() {
 /**
  * ====================PARSER====================
  */
-void parser() {
+
+AST* expressionStatement() {
+    AST* left,*right;
+    if(currToken.token == TOK_IDENTIFIER || currToken.token == TOK_INT) {
+        // make the left AST
+        left = makePrimaryExpressionAST();
+    }
+    else {
+        // error: invalid token
+        printf("error: invalid token");
+        exit(1);
+    }
+
+    // look ahead the next char to decide 
+    getNextToken();
     
+    int arithmeticOp;
+
+    if(currToken.token == TOK_DIV) {
+        arithmeticOp = TOK_DIV;
+    }
+    else if(currToken.token == TOK_MULT) {
+        arithmeticOp = TOK_MULT;
+    }
+    else if(currToken.token == TOK_PLUS) {
+        arithmeticOp = TOK_PLUS;
+    }
+    else if(currToken.token == TOK_MINUS) {
+        arithmeticOp = TOK_MINUS;
+    }
+    else if(currToken.token == TOK_SMCL) {
+        return left;
+    }
+    else {
+        // error: invalid token
+        printf("error: invalid token");
+        exit(1);
+    }
+
+
+    getNextToken();
+    right = expressionStatement();
+
+    return makeArithmeticExpressionAST(arithmeticOp, left, right);
+
+}
+
+AST* compoundStatement() {
+    return NULL;
+}
+
+AST* selectionStatement() {
+    return NULL;
+}
+
+
+AST* statement() {
+    AST* ast = NULL;
+
+    switch(currToken.token) {
+        case TOK_INT:
+        case TOK_IDENTIFIER:
+            // check the next token, if its not ( it's an expression, otherwise its function call
+            ast = expressionStatement();
+            // commented as it will be implemented later 
+            //ast = functionCallStatement();
+            break;
+        case TOK_CURLY_BRACKET_OPEN:
+            ast = compoundStatement();
+            break;
+        case TOK_IF:
+            ast = selectionStatement();
+            break;
+    }
+
+    return ast;
+}
+
+AST* program() {
+
+    return makeProgramAST(statement(), NULL);
+}
+
+void parser() {
+    while(true) {
+        getNextToken();
+        AST* ast = program();
+        printf("%p\n", ast);
+        if(currToken.token == TOK_EOF || currToken.token == TOK_SMCL) break;
+    }
 }
 /**
  * ====================/PARSER====================
@@ -146,7 +397,7 @@ void parser() {
 void cleanUp() {
     free(src);
     src = NULL;
-    pclose(fptr);
+    fclose(fptr);
 }
 
 int main(int argc, char **argv) {
@@ -169,13 +420,7 @@ int main(int argc, char **argv) {
         return -1;
     }
 
-    do {
-        getNextChar();
-        if(!isEos(currChar))
-            printf("%c", currChar);
-        else break;
-    }
-    while(true);
+    parser();
 
     cleanUp();
 }
