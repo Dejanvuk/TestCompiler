@@ -3,3 +3,5 @@ test.c
 test.s
 .vscode
 test-compiler
+asmtest.c
+asmtest.s

@@ -5,6 +5,7 @@
 #include <ctype.h>
 #include <memory.h>
 #include <string.h>
+#include <math.h>
 
 #define isDigit(X) ((X) >= '0' && (X) <= '9' ? true : false)
 #define isAlphanumeric(X) (((X) >= '0' && (X) <= '9') || (((X) >= 'a' && (X) <= 'z') || ((X) >= 'A' && (X) <= 'Z'))) ? true : false)
@@ -16,6 +17,7 @@
 #define MAX_NUMBER_SIZE 32
 
 char* sourceFileName;
+char* destFileName;
 char* src;  // pointer to source code string; 
 FILE *fptr; // pointer to source code file
 FILE *ofptr; // pointer to output file
@@ -125,8 +127,27 @@ typedef struct token {
 
 Token currToken = {0,0};
 
+void error(int token) {
+    printf("error: expected %d token ", token);
+    exit(1);
+}
+
+bool accept(int t) {
+    return currToken.token == t;
+}
+
+bool expect(Token t) {
+    if(accept(t.token)) {
+        return true;
+    }
+    else {
+        return false;
+    }
+}
+
 enum { // terminal symbols
   TOK_EOF = EOF, // -1 
+  TOK_MOD,
   TOK_MULT, // *
   TOK_DIV, // /
   TOK_PLUS, // +
@@ -145,10 +166,19 @@ enum { // terminal symbols
   TOK_SMCL // ';'
 };
 
+int precedenceTable[] = { // the lower the more priority
+    1, // MOD
+    1, // MULT
+    1, // DIV
+    2, // PLUS
+    2 // MINUS}; 
+};
 enum { 
     op_PROGRAM,
     op_STATEMENT,
-    op_EXPRESSION_STATEMENT,
+    op_MOD,
+    op_DIV,
+    op_MULT,
     op_PLUS,
     op_MINUS,
     op_IDENTIFIER,
@@ -193,10 +223,6 @@ AST* makeStatementAST (AST* left) {
   return makeOneChildAST(op_STATEMENT,0, left);
 };
 
-AST* makeExpressionStatementAST (AST* left) {
-  return makeOneChildAST(op_EXPRESSION_STATEMENT,0, left);
-};
-
 AST* makeArithmeticExpressionAST (int op,AST* left, AST* right) {
   return makeAST(op, 0, left, right);
 };
@@ -210,7 +236,7 @@ AST* makePrimaryExpressionAST () {
             return makeOneChildAST(op_IDENTIFIER,0, NULL);
             break;
         default:
-            printf("error: invalid token");
+            printf("error: invalid token: expected %s %s", "int", "<identifier-name>");
             exit(1);
     }
 };
@@ -277,6 +303,9 @@ void getNextToken() {
         case '/':
             currToken.token = TOK_DIV;
             break;
+        case '%':
+            currToken.token = TOK_MOD;
+            break;
         case TOK_EOF:
             currToken.token = TOK_EOF;
             break;
@@ -300,50 +329,63 @@ void getNextToken() {
  * ====================PARSER====================
  */
 
-AST* expressionStatement() {
-    AST* left,*right;
-    if(currToken.token == TOK_IDENTIFIER || currToken.token == TOK_INT) {
-        // make the left AST
-        left = makePrimaryExpressionAST();
+
+int getArithmeticOp(int t) {
+    int arithmeticOp;
+    if(t == TOK_MOD) {
+        arithmeticOp = op_MOD;
+    }
+    else if(t == TOK_DIV) {
+        arithmeticOp = op_DIV;
+    }
+    else if(t == TOK_MULT) {
+        arithmeticOp = op_MULT;
+    }
+    else if(t == TOK_PLUS) {
+        arithmeticOp = op_PLUS;
+    }
+    else if(t == TOK_MINUS) {
+        arithmeticOp = op_MINUS;
     }
     else {
-        // error: invalid token
-        printf("error: invalid token");
+        printf("error: invalid token: expected %c or %c or %c or %c or %c or %c", '%', '*', '/', '+', '-', ';');
         exit(1);
     }
 
-    // look ahead the next char to decide 
-    getNextToken();
-    
-    int arithmeticOp;
+    return arithmeticOp;
+}
 
-    if(currToken.token == TOK_DIV) {
-        arithmeticOp = TOK_DIV;
-    }
-    else if(currToken.token == TOK_MULT) {
-        arithmeticOp = TOK_MULT;
-    }
-    else if(currToken.token == TOK_PLUS) {
-        arithmeticOp = TOK_PLUS;
-    }
-    else if(currToken.token == TOK_MINUS) {
-        arithmeticOp = TOK_MINUS;
-    }
-    else if(currToken.token == TOK_SMCL) {
+AST* expressionStatement(int previousTokenPrecedence) {
+    AST* left,*right;
+
+    int localToken;
+
+    left = makePrimaryExpressionAST();
+
+    getNextToken();
+
+    localToken = currToken.token;
+    
+
+    if(localToken == TOK_SMCL) {
         return left;
     }
-    else {
-        // error: invalid token
-        printf("error: invalid token");
-        exit(1);
+
+    // build the right tree accordingly
+    while(precedenceTable[localToken] < previousTokenPrecedence) {
+        getNextToken();
+
+        right = expressionStatement(precedenceTable[localToken]);
+
+        left = makeArithmeticExpressionAST(getArithmeticOp(localToken), left, right);
+
+        localToken = currToken.token;
+
+        if(localToken == TOK_SMCL) 
+            return left;
     }
 
-
-    getNextToken();
-    right = expressionStatement();
-
-    return makeArithmeticExpressionAST(arithmeticOp, left, right);
-
+    return left;
 }
 
 AST* compoundStatement() {
@@ -362,16 +404,19 @@ AST* statement() {
         case TOK_INT:
         case TOK_IDENTIFIER:
             // check the next token, if its not ( it's an expression, otherwise its function call
-            ast = expressionStatement();
+            ast = makeStatementAST(expressionStatement(3));
             // commented as it will be implemented later 
             //ast = functionCallStatement();
             break;
         case TOK_CURLY_BRACKET_OPEN:
-            ast = compoundStatement();
+            ast = makeStatementAST(compoundStatement());
             break;
         case TOK_IF:
-            ast = selectionStatement();
+            ast = makeStatementAST(selectionStatement());
             break;
+        default:
+            printf("error: invalid token; expected %s or %s or %c or %s", "int", "<identifier-name>", '{', "if");
+            exit(1);
     }
 
     return ast;
@@ -379,17 +424,59 @@ AST* statement() {
 
 AST* program() {
 
-    return makeProgramAST(statement(), NULL);
+    AST* stmt = statement();
+    return makeProgramAST(stmt, NULL);
 }
 
-void parser() {
-    while(true) {
-        getNextToken();
-        AST* ast = program();
-        printf("%p\n", ast);
-        if(currToken.token == TOK_EOF || currToken.token == TOK_SMCL) break;
+int parseArithmeticTree(AST* ast) {
+    if(ast->left == NULL) {
+        // return either the value of the identifier OR the number
+        switch(ast->op) {
+            case op_INT:
+                return ast->value;
+            case op_IDENTIFIER:
+                //return getIdentifierValue(); not yet implemented
+                break;
+        }
+    }
+
+    int leftVal = parseArithmeticTree(ast->left);
+    int rightVal = parseArithmeticTree(ast->right);
+
+    if(ast->op == op_MOD) {
+        return leftVal % rightVal;
+    }
+    else if(ast->op == op_MULT) {
+        return leftVal * rightVal;
+    }
+    else if(ast->op == op_DIV) {
+        return leftVal / rightVal;
+    }
+    else if(ast->op == op_PLUS) {
+        return leftVal + rightVal;
+    }
+    else if(ast->op == op_MINUS) {
+        return leftVal - rightVal;
+    }
+    else {
+        printf("error: invalid token: expected %c or %c or %c or %c or %c or %c", '%', '*', '/', '+', '-', ';');
+        exit(1);
     }
 }
+
+AST* parser() {
+    /*
+    while(currToken.token != TOK_EOF && currToken.token != TOK_SMCL) {
+        getNextToken();
+        AST* ast = program();
+        //printf("\n%d\n", parseArithmeticTree(ast->left->left));
+    }
+    */
+
+   getNextToken();
+   return program();
+}
+
 /**
  * ====================/PARSER====================
  */
@@ -398,6 +485,41 @@ void cleanUp() {
     free(src);
     src = NULL;
     fclose(fptr);
+}
+
+void writePreamble() {
+    destFileName = (char*) malloc(strlen(sourceFileName));
+    strcpy(destFileName, sourceFileName);
+    destFileName[strlen(sourceFileName) - 1] = 's';
+
+    ofptr = fopen(destFileName, "wt");
+
+    if (!ofptr) {
+        printf("failed to create (%s) dest file", destFileName);
+        exit(1);
+    }
+
+    char* fileNamePreamble = "\t.file\t\"";
+    fwrite(fileNamePreamble, sizeof(fileNamePreamble), 1, ofptr);
+    fwrite(sourceFileName, strlen(sourceFileName), 1 , ofptr);
+    char* no_prefix_intel = "\"\r\n\t.intel_syntax noprefix"; // forces the GNU Assembler to not require % for registers
+    fwrite(no_prefix_intel, strlen(no_prefix_intel), 1, ofptr);
+    char* preamble = "\r\n\t.text\r\n\t.globl\tmain\r\n\t.type\tmain, @function\r\nmain:";
+    fwrite(preamble, strlen(preamble), 1 , ofptr);
+}
+
+void writeExpression(AST* ast) {
+    int result = parseArithmeticTree(ast->left->left);
+    char strResult[(int)floor(log10(abs(result))) + 1];
+    sprintf(strResult, "%d", result);
+    char* movlCommand = "\n\tmov eax, ";
+    fwrite(movlCommand, strlen(movlCommand), 1, ofptr);
+    fwrite(strResult, sizeof(strResult), 1, ofptr);
+}
+
+void writePostamble() {
+    char* postamble = "\r\n\tret\n";
+    fwrite(postamble, strlen(postamble), 1, ofptr);
 }
 
 int main(int argc, char **argv) {
@@ -420,7 +542,9 @@ int main(int argc, char **argv) {
         return -1;
     }
 
-    parser();
+    writePreamble();
+    writeExpression(parser());
+    writePostamble();
 
     cleanUp();
 }
