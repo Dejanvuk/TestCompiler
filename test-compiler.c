@@ -152,26 +152,27 @@ enum { // terminal symbols
   TOK_DIV, // /
   TOK_PLUS, // +
   TOK_MINUS, // -
+  TOK_ROUND_BRACKET_OPEN, // '('
+  TOK_ROUND_BRACKET_CLOSE, // ')'
   TOK_IDENTIFIER, // variable
   TOK_INT, // int
   TOK_CURLY_BRACKET_OPEN, // '{'
   TOK_CURLY_BRACKET_CLOSE, // '{'
   TOK_SQUARE_BRACKET_CLOSE, // '['
   TOK_SQUARE_BRACKET_OPEN, // ']'
-  TOK_ROUND_BRACKET_OPEN, // '('
-  TOK_ROUND_BRACKET_CLOSE, // ')'
   TOK_IF, // 'if'
   TOK_ELSE_IF, // 'else if'
   TOK_ELSE, // 'else
   TOK_SMCL // ';'
 };
 
-int precedenceTable[] = { // the lower the more priority
-    1, // MOD
-    1, // MULT
-    1, // DIV
-    2, // PLUS
-    2 // MINUS}; 
+int precedenceTable[] = { 
+    2, // MOD
+    2, // MULT
+    2, // DIV
+    3, // PLUS
+    3, // MINUS
+    4, // ROUND BRACKET OPEN
 };
 enum { 
     op_PROGRAM,
@@ -312,6 +313,12 @@ void getNextToken() {
         case ';':
             currToken.token = TOK_SMCL;
             break;
+        case '(':
+            currToken.token = TOK_ROUND_BRACKET_OPEN;
+            break;
+        case ')':
+            currToken.token = TOK_ROUND_BRACKET_CLOSE;
+            break;
         default: // error: unrecognised char
             printf("error: unrecognised character");
             exit(1);
@@ -364,6 +371,10 @@ AST* expressionStatement(int previousTokenPrecedence) {
 
     getNextToken();
 
+    if(accept(TOK_ROUND_BRACKET_CLOSE)) {
+        return left;
+    }
+
     localToken = currToken.token;
     
 
@@ -373,11 +384,25 @@ AST* expressionStatement(int previousTokenPrecedence) {
 
     // build the right tree accordingly
     while(precedenceTable[localToken] < previousTokenPrecedence) {
-        getNextToken();
+        getNextToken(); // either ( or int/identifier
 
-        right = expressionStatement(precedenceTable[localToken]);
+        if(accept(TOK_ROUND_BRACKET_OPEN)) {
+            int roundBracketPrecendene = precedenceTable[TOK_ROUND_BRACKET_OPEN];
+            getNextToken(); // get the int/identifier
+            right = expressionStatement(roundBracketPrecendene);
+            if(currToken.token != TOK_ROUND_BRACKET_CLOSE) { // we're expeting a closing ) token
+                error(TOK_ROUND_BRACKET_CLOSE);
+            }
+            getNextToken();
+        }
+        else 
+            right = expressionStatement(precedenceTable[localToken]);
 
         left = makeArithmeticExpressionAST(getArithmeticOp(localToken), left, right);
+
+        if(accept(TOK_ROUND_BRACKET_CLOSE)) {
+            return left; // if ) return the tree 
+        }
 
         localToken = currToken.token;
 
@@ -404,7 +429,7 @@ AST* statement() {
         case TOK_INT:
         case TOK_IDENTIFIER:
             // check the next token, if its not ( it's an expression, otherwise its function call
-            ast = makeStatementAST(expressionStatement(3));
+            ast = makeStatementAST(expressionStatement(4));
             // commented as it will be implemented later 
             //ast = functionCallStatement();
             break;
@@ -424,7 +449,12 @@ AST* statement() {
 
 AST* program() {
 
-    AST* stmt = statement();
+    AST* stmt;
+    while(currToken.token != TOK_EOF && currToken.token != TOK_SMCL) {
+        AST* stmt = statement();
+        getNextToken();
+    }
+
     return makeProgramAST(stmt, NULL);
 }
 
@@ -465,14 +495,6 @@ int parseArithmeticTree(AST* ast) {
 }
 
 AST* parser() {
-    /*
-    while(currToken.token != TOK_EOF && currToken.token != TOK_SMCL) {
-        getNextToken();
-        AST* ast = program();
-        //printf("\n%d\n", parseArithmeticTree(ast->left->left));
-    }
-    */
-
    getNextToken();
    return program();
 }
@@ -510,6 +532,7 @@ void writePreamble() {
 
 void writeExpression(AST* ast) {
     int result = parseArithmeticTree(ast->left->left);
+    printf("%d\n", result);
     char strResult[(int)floor(log10(abs(result))) + 1];
     sprintf(strResult, "%d", result);
     char* movlCommand = "\n\tmov eax, ";
