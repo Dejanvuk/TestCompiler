@@ -50,14 +50,14 @@ STATEMENT:
          | FUNCTION_CALL)}
 
 PRIMARY_EXPRESSION: 
-                  TOK_IDENTIFIER 
+                  TOK_currStringIFIER 
                   | NUMBER
 
 EXPRESSION_STATEMENT: (PRIMARY_EXPRESSION | PRIMARY_EXPRESSION (TOK_MULT | TOK_DIV | TOK_PLUS | TOK_MINUS) EXPRESSION_STATEMENT) TOK_SMCL
 
-ASSIGNMENT_STATEMENT: TOK_IDENTIFIER TOK_ASSIGN (EXPRESSION_STATEMENT | FUNCTION_CALL) TOK_SMCL
+ASSIGNMENT_STATEMENT: TOK_currStringIFIER TOK_ASSIGN (EXPRESSION_STATEMENT | FUNCTION_CALL) TOK_SMCL
 
-DECLARE_STATEMENT: TYPE_SPECIFIER TOK_IDENTIFIER (ASSIGNMENT_STATEMENT | TOK_SMCL)
+DECLARE_STATEMENT: TYPE_SPECIFIER TOK_currStringIFIER (ASSIGNMENT_STATEMENT | TOK_SMCL)
 
 BOOLEAN_EXPRESSION: PRIMARY_EXPRESSION ('==' | '<=' | '<' | '>=' | '>' | '!=') PRIMARY_EXPRESSION
 
@@ -67,19 +67,19 @@ FUNCTION_DECLARATION:
 
 FUNCTION_DEFINITION:
 
-FUNCTION_CALL: TOK_IDENTIFIER '(' [TOK_IDENTIFIER | NUMBER | STRING | ARRAY] { TOK_COMMA (TOK_IDENTIFIER | NUMBER | STRING | ARRAY)} ')' TOK_SMCL
+FUNCTION_CALL: TOK_currStringIFIER '(' [TOK_currStringIFIER | NUMBER | STRING | ARRAY] { TOK_COMMA (TOK_currStringIFIER | NUMBER | STRING | ARRAY)} ')' TOK_SMCL
 
-RETURN: 'return' (TOK_IDENTIFIER | DIGIT | BOOLEAN | POINTER) TOK_SMCL
+RETURN: 'return' (TOK_currStringIFIER | DIGIT | BOOLEAN | POINTER) TOK_SMCL
 
 ARRAY: '[' [TOK_PLUS | TOK_MINUS] NUMBER {TOK_COMMA [TOK_PLUS | TOK_MINUS] NUMBER } ']'
 
-TOK_IDENTIFIER: {LETTER | DIGIT};
+TOK_currStringIFIER: {LETTER | DIGIT};
 
 STRING: '"' ({LETTER | DIGIT}) '"'
 
 BOOLEAN: 'true' | 'false'
 
-POINTER: TOK_MULT {TOK_IDENTIFIER}
+POINTER: TOK_MULT {TOK_currStringIFIER}
 
 TYPE_SPECIFIER: 'int' 
               | 'double'
@@ -140,8 +140,9 @@ TOK_ASSIGN: '='
 typedef struct token {
   int token;
   int value;
-  char* ident;
 } Token;
+
+char* currString = NULL;
 
 Token currToken = {0,0, NULL};
 
@@ -174,7 +175,7 @@ enum { // terminal symbols
   TOK_ROUND_BRACKET_CLOSE, // ')'
   TOK_TYPE_SPECIFIER, // 'int', 'double' 
   TOK_ASSIGN, // =
-  TOK_IDENTIFIER, // variable
+  TOK_currStringIFIER, // variable
   TOK_INT, // int
   TOK_CURLY_BRACKET_OPEN, // '{'
   TOK_CURLY_BRACKET_CLOSE, // '{'
@@ -205,14 +206,14 @@ enum {
     op_TYPE,
     op_DECLARE,
     OP_ASSIGN,
-    op_IDENTIFIER,
+    op_currStringIFIER,
     op_INT,
 };
 
-int getIdentType() {
-	if(!strcmp(currToken.ident, "int"))
+int getTypeSpecifier(char* type) {
+	if(!strcmp(type, "int"))
 		return 0;
-    else if (!strcmp(currToken.ident, "double"))
+    else if (!strcmp(type, "double"))
         return 1;
     else // float
         return 2;
@@ -227,11 +228,25 @@ typedef struct entry {
 
 ENTRY SymbolTable[MAX_SYMBOL_TABLE_SIZE];
 int SymbolTableIndex = 0;
+
 /*
 return: the index in the tabel of the new symbol
 */
-int addSymbolEntry() {
-    return 1;
+int addSymbolEntry(char* name, char* type) {
+    ENTRY* e = (ENTRY*) malloc(sizeof(ENTRY));
+
+    if(e == NULL) {
+        printf("could not allocate %zu for ENTRY node\n", sizeof(ENTRY));
+        exit(1);
+    }
+
+    e->index = SymbolTableIndex++;
+    e->name = currString;
+    e->type = getTypeSpecifier(type);
+
+    // determine scope based on ast parent
+    // program parent -> global
+    // function parent -> local
 }
 
 /*
@@ -298,11 +313,11 @@ AST* makePrimaryExpressionAST () {
         case TOK_INT:
             return makeOneChildAST(op_INT,currToken.value, NULL);
             break;
-        case TOK_IDENTIFIER:
-            return makeOneChildAST(op_IDENTIFIER,0, NULL);
+        case TOK_currStringIFIER:
+            return makeOneChildAST(op_currStringIFIER,0, NULL);
             break;
         default:
-            printf("error: invalid token: expected %s %s", "int", "<identifier-name>");
+            printf("error: invalid token: expected %s %s", "int", "<currStringifier-name>");
             exit(1);
     }
 };
@@ -310,7 +325,7 @@ AST* makePrimaryExpressionAST () {
 /**
  * ====================LEXER====================
  * LL(1) Linear scan in a stream of characters, 
- * identifies the lexemes in the stream, and categorizes them into tokens
+ * currStringifies the lexemes in the stream, and categorizes them into tokens
  */
 
 /*
@@ -330,25 +345,25 @@ void getNextToken() {
         currChar = fgetc(fptr);
     
     if(currChar == '_' || isAlphanumeric(currChar)) {
-        // read the whole TOK_IDENTIFIER until space
-        currToken.ident = (char*) malloc(MAX_STRING_SIZE + 1);
+        // read the whole TOK_currStringIFIER until space
+        currString = (char*) malloc(MAX_STRING_SIZE + 1);
         int i = 0;
         do {
-            currToken.ident[i++] = currChar;
+            currString[i++] = currChar;
             currChar = fgetc(fptr);
         }
         while(isAlphanumeric(currChar));
 
         ungetc(currChar, fptr); // unread the non-alpha back into the stream
 
-        currToken.ident[i] = '\0';
+        currString[i] = '\0';
 
         // check if it's a reserved keyword first
-        if(!strcmp(currToken.ident, "int")) {
+        if(!strcmp(currString, "int")) {
             currToken.token = TOK_TYPE_SPECIFIER;
         }
-        else { //it's an identifier
-            currToken.token = TOK_IDENTIFIER;
+        else { //it's an currStringifier
+            currToken.token = TOK_currStringIFIER;
         }
 
         return;
@@ -485,11 +500,11 @@ AST* expressionStatement(int previousTokenPrecedence) {
 
     // build the right tree accordingly
     while(precedenceTable[localToken] < previousTokenPrecedence) {
-        getNextToken(); // either ( or int/identifier
+        getNextToken(); // either ( or int/currStringifier
 
         if(accept(TOK_ROUND_BRACKET_OPEN)) {
             int roundBracketPrecendene = precedenceTable[TOK_ROUND_BRACKET_OPEN];
-            getNextToken(); // get the int/identifier or could be one or many (
+            getNextToken(); // get the int/currStringifier or could be one or many (
             right = expressionStatement(roundBracketPrecendene);
             if(currToken.token != TOK_ROUND_BRACKET_CLOSE) { // we're expeting a closing ) token
                 error(TOK_ROUND_BRACKET_CLOSE);
@@ -502,7 +517,7 @@ AST* expressionStatement(int previousTokenPrecedence) {
             while(currToken.token != TOK_SMCL && currToken.token != TOK_ROUND_BRACKET_CLOSE && precedenceTable[currToken.token] < localToken) {
                 //run again the loop and return the correct right, a tree where the currToken.token has lower or equal precedence to localToken
                 int newLocalToken = currToken.token;
-                getNextToken(); // int/identifier or could be followed by one or many (
+                getNextToken(); // int/currStringifier or could be followed by one or many (
                 AST* newRight = expressionStatement(precedenceTable[localToken]);
                 right = makeArithmeticExpressionAST(getArithmeticOp(newLocalToken), right, newRight);
             } 
@@ -543,16 +558,16 @@ AST* statement() {
 
     switch(currToken.token) {
         case TOK_INT:
-            ast = makeStatementAST(expressionStatement(4));
+            ast = expressionStatement(4);
             break;
         case TOK_IF:
-            ast = makeStatementAST(selectionStatement());
+            ast = selectionStatement();
             break;
         case TOK_TYPE_SPECIFIER:
-            ast = makeStatementAST(declareStatement());
+            ast = declareStatement();
             break;
         default:
-            printf("error: invalid token; expected %s or %s or %c or %s", "int", "<identifier-name>", '{', "if");
+            printf("error: invalid token; expected %s or %s or %c or %s", "int", "<currStringifier-name>", '{', "if");
             exit(1);
     }
 
@@ -899,8 +914,8 @@ int parseArithmeticTree(AST* ast) {
             asm_mov_write(addedPurposeRegisters[reg],NULL,0, 2, ast->value);
             return reg;
         }
-        else if(op == op_IDENTIFIER) {
-            //return getIdentifierValue(); not yet implemented
+        else if(op == op_currStringIFIER) {
+            //return getcurrStringifierValue(); not yet implemented
             return -1;
         }
     }
@@ -943,12 +958,12 @@ int parseArithmeticTree(AST* ast) {
 
 int optimized_parseArithmeticTree(AST* ast) {
     if(ast->left == NULL) {
-        // return either the value of the identifier OR the number
+        // return either the value of the currStringifier OR the number
         switch(ast->op) {
             case op_INT:
                 return ast->value;
-            case op_IDENTIFIER:
-                //return getIdentifierValue(); not yet implemented
+            case op_currStringIFIER:
+                //return getcurrStringifierValue(); not yet implemented
                 break;
         }
     }
