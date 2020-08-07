@@ -5,3 +5,4 @@ test.s
 test-compiler
 asmtest.c
 asmtest.s
+issues.txt
