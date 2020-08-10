@@ -338,8 +338,8 @@ AST* makeDeclareAST (int op,int symbolIndex, AST* left) {
   return makeAST(op, symbolIndex, left, NULL, NULL);
 };
 
-AST* makeAssignmentAST (int op,AST* left,AST* mid, AST* right) {
-  return makeAST(op, 0, left, mid, right);
+AST* makeAssignmentAST (int op,int symbolIndex, AST* left) {
+  return makeAST(op, symbolIndex, left, NULL, NULL);
 };
 
 AST* makePrimaryExpressionAST () {
@@ -617,7 +617,21 @@ AST* declareStatement() {
 }
 
 AST* assignmentStatement() {
-    return NULL;
+    int identIndex = getSymbolIndex(currString);
+    if(identIndex == -1) {
+            printf("error: symbol %s is not defined!", currString);
+            exit(1);
+    }
+
+    getNextToken(); // '='
+
+    if(!accept(TOK_ASSIGN)) {
+        error(TOK_ASSIGN);
+    }
+
+    getNextToken(); 
+    AST* expr = expressionStatement(4);
+    return makeAssignmentAST(OP_ASSIGN, identIndex, expr);
 }
 
 AST* selectionStatement() {
@@ -634,6 +648,9 @@ AST* statement() {
             break;
         case TOK_TYPE_SPECIFIER:
             ast = declareStatement();
+            break;
+        case TOK_IDENTIFIER: // either an assignment or function call 
+            ast = assignmentStatement();
             break;
         default:
             printf("error: invalid token; expected %s or %s or %c or %s", "int", "<currStringifier-name>", '{', "if");
@@ -1131,9 +1148,13 @@ void parseDeclarationAst(AST* ast) {
 }
 
 void parseAssignAst(AST* ast) {
+    ENTRY* e = lookupSymbol(ast->value);
 
+    int resultReg = parseArithmeticTree(ast->left);
+    printf("register that has the expr val:%s\n", addedPurposeRegisters[resultReg]);
+    asm_mov_write(e->name,addedPurposeRegisters[resultReg],2, 0, 0);
+    availableAddedPurposeRegisters[resultReg] = 0;
 
-    // free all registers used in declaration
 }
 
 void parseProgramAst(AST* ast) {
