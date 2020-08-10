@@ -7,6 +7,8 @@
 #include <string.h>
 #include <math.h>
 
+#include "parser.h"
+
 #define isDigit(X) ((X) >= '0' && (X) <= '9' ? true : false)
 
 #define isSpace(X) ((X) == ' ' ? true : false)
@@ -187,7 +189,8 @@ enum { // terminal symbols
   TOK_IF, // 'if'
   TOK_ELSE_IF, // 'else if'
   TOK_ELSE, // 'else
-  TOK_SMCL // ';'
+  TOK_SMCL, // ';'
+  TOK_COMMA // ,
 };
 
 int precedenceTable[] = { 
@@ -199,7 +202,7 @@ int precedenceTable[] = {
     4, // ROUND BRACKET OPEN
 };
 enum { 
-    op_PROGRAM,
+    op_PROGRAM, 
     op_MOD,
     op_DIV,
     op_MULT,
@@ -225,16 +228,21 @@ typedef struct entry {
     char* name;
     int type_specifier; // 0-int 1-double
     int type; // 0-variable 1-function 
-    int scope; // 0- global 1-local/function
+    int scope; // 0- global 1-local 2-local function argument
+    int owner; // for scope 1 and 2 the owner function symbol id else -1 if owner is program
 } ENTRY;
 
 ENTRY* SymbolTable[MAX_SYMBOL_TABLE_SIZE];
 int symbolTableIndex = 0;
 
+int getSymbolScope(int owner) {
+    return (owner == 0) ? 0 : 1;
+}
+
 /*
 return: the index in the tabel of the new symbol
 */
-int addSymbolEntry(char* name, char* type_specifier, int type) {
+int addSymbolEntry(char* name, char* type_specifier, int type,int scope, int owner) {
     ENTRY* e = (ENTRY*) malloc(sizeof(ENTRY));
 
     if(e == NULL) {
@@ -246,14 +254,10 @@ int addSymbolEntry(char* name, char* type_specifier, int type) {
     e->name = currString;
     e->type_specifier= getTypeSpecifier(type_specifier);
     e->type = type;
+    e->scope = scope;
+    e->owner = owner;
 
     SymbolTable[symbolTableIndex] = e;
-
-    // determine scope based on AST parent
-    // program parent -> global
-    // function parent -> local
-    // add it global for the moment
-    e->scope = 0;
 
     return symbolTableIndex++;
 }
@@ -291,14 +295,6 @@ int getSymbolIndex(char* name) {
     return index;
 }
 
-typedef struct ast {
-    int op;
-    int value;
-    struct ast* left;
-    struct ast* mid;
-    struct ast* right;
-} AST;
-
 AST* makeAST(int op, int value, AST* left, AST* mid, AST* right) {
     AST* e = (AST*) malloc(sizeof(AST));
 
@@ -334,8 +330,8 @@ AST* makeArithmeticExpressionAST (int op,AST* left, AST* right) {
 /*
 left -> expression
 */
-AST* makeDeclareAST (int op,int symbolIndex, AST* left) {
-  return makeAST(op, symbolIndex, left, NULL, NULL);
+AST* makeDeclareAST (int op,int symbolIndex, AST* left, AST* mid, AST* right) {
+  return makeAST(op, symbolIndex, left, mid, right);
 };
 
 AST* makeAssignmentAST (int op,int symbolIndex, AST* left) {
@@ -458,6 +454,15 @@ void getNextToken() {
         case ')':
             currToken.token = TOK_ROUND_BRACKET_CLOSE;
             break;
+        case '{':
+            currToken.token = TOK_CURLY_BRACKET_OPEN;
+            break;
+        case '}':
+            currToken.token = TOK_CURLY_BRACKET_CLOSE;
+            break;
+        case ',':
+            currToken.token = TOK_COMMA;
+            break;
         default: // error: unrecognised char
             printf("error: unrecognised character");
             exit(1);
@@ -578,9 +583,18 @@ AST* expressionStatement(int previousTokenPrecedence) {
     return left;
 }
 
-AST* declareStatement() {
+/* 
+        (op_DECLARE)
+    for variable 
+        left: expressionAST 
+    for functions
+        left: array of arguments op_IDENT that contain only the type specifier of each argument 
+        mid: statements with the right linking to next statement
+*/
+AST* declareStatement(int owner) {
     char* typeSpecifier = currString; // save the type specifier
     char* identifierName = NULL;
+    int symbolIndex = -1;
 
     getNextToken(); // get the identifier name
 
@@ -590,25 +604,98 @@ AST* declareStatement() {
     else 
         error(TOK_IDENTIFIER);
 
-    // add the symbol to the table
-    int symbolIndex = addSymbolEntry(identifierName, typeSpecifier, 0); // 0-variable until functions are implemented
-
-    getNextToken(); // either ';' or '='
+    getNextToken(); // either ';' or '=' or '(' 
 
     if(accept(TOK_SMCL)) {
-        return makeDeclareAST(op_DECLARE,symbolIndex, NULL);
+        symbolIndex = addSymbolEntry(identifierName, typeSpecifier, 0, getSymbolScope(owner), owner);
+        return makeDeclareAST(op_DECLARE,symbolIndex, NULL, NULL, NULL);
     }
     else if(accept(TOK_ASSIGN)) {
-        getNextToken();
+        symbolIndex = addSymbolEntry(identifierName, typeSpecifier, 0, getSymbolScope(owner), owner); 
+        getNextToken(); // expression follows
         if(accept(TOK_INT) || accept(TOK_IDENTIFIER)) {
             AST* expr = expressionStatement(4);
-            return makeDeclareAST(op_DECLARE,symbolIndex, expr);
+            return makeDeclareAST(op_DECLARE,symbolIndex, expr, NULL, NULL);
         }
         else {
             printf("error: invalid token: expected %s or %s", "number", "identifier");
             exit(1);
         }
 
+    }
+    else if(accept(TOK_ROUND_BRACKET_OPEN)) { // function declaration
+        AST* firstArgAst = NULL;
+        AST* prevArgAst = NULL;
+
+        AST* firstStatementAst = NULL;
+        AST* prevStatementAst = NULL;
+
+        if(owner != 0) {
+            printf("error: functions can only be declared global!");
+            exit(1);
+        }
+
+        // register the function symbol in the table
+        symbolIndex = addSymbolEntry(identifierName, typeSpecifier, 1, getSymbolScope(owner), owner); // scope 0 because functions can only be global for the moment
+
+        getNextToken(); // get the first argument type specifier
+        // create the chain of arguments
+        while(currToken.token != TOK_ROUND_BRACKET_CLOSE) {
+            if(currToken.token == TOK_COMMA) {
+                getNextToken();
+            }
+
+            if(accept(TOK_TYPE_SPECIFIER)) {
+                typeSpecifier = currString; // save the type specifier of the argument
+            }
+            else 
+                error(TOK_TYPE_SPECIFIER);
+
+            getNextToken(); // get the identifier name of the argument
+
+            if(accept(TOK_IDENTIFIER)) {
+                identifierName = currString;
+            }
+            else 
+                error(TOK_IDENTIFIER);
+
+            addSymbolEntry(identifierName, typeSpecifier , 0, 2,  symbolIndex); // first add the new argument in the local symbol table of the function
+            AST* currArgAST = makePrimaryExpressionAST();
+
+            if(firstArgAst == NULL) {
+                firstArgAst = currArgAST;
+                prevArgAst = currArgAST;
+            }
+            else {
+                prevArgAst->left = currArgAST;
+                prevArgAst = currArgAST;
+            }
+
+            getNextToken();
+
+        }
+
+        getNextToken(); // '{' follows
+
+        if(!accept(TOK_CURLY_BRACKET_OPEN)) 
+            error(TOK_CURLY_BRACKET_OPEN);
+
+        getNextToken(); 
+        // create the chain of statements untill '}'
+        while(currToken.token != TOK_CURLY_BRACKET_CLOSE) {
+            AST* currStmtAst = statement();
+            if(firstStatementAst == NULL) {
+                firstStatementAst = currStmtAst;
+                prevStatementAst = currStmtAst;
+            }
+            else {
+                prevStatementAst->mid = currStmtAst;
+                prevStatementAst = currStmtAst;
+            }
+            getNextToken();
+        }
+
+        return makeDeclareAST(op_DECLARE,symbolIndex, firstArgAst, firstStatementAst, NULL);
     }
     else {
         printf("error: invalid token: expected %c or %c", ';', '=');
@@ -647,7 +734,7 @@ AST* statement() {
             ast = selectionStatement();
             break;
         case TOK_TYPE_SPECIFIER:
-            ast = declareStatement();
+            ast = declareStatement(0);
             break;
         case TOK_IDENTIFIER: // either an assignment or function call 
             ast = assignmentStatement();
@@ -663,9 +750,8 @@ AST* statement() {
 AST* program() {
     AST* firstStatement = NULL;
     AST* prevStatement = NULL;
-    AST* stmt = NULL;
     while(currToken.token != TOK_EOF) {
-        stmt = statement();
+        AST* stmt = declareStatement(0); // program has a series of declarations
         if(firstStatement == NULL) {
             firstStatement = stmt;
             prevStatement = stmt;
