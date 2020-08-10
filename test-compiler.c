@@ -9,7 +9,6 @@
 
 #define isDigit(X) ((X) >= '0' && (X) <= '9' ? true : false)
 
-#define isLetter(X) ((((X) >= 'a' && (X) <= 'z') || ((X) >= 'A' && (X) <= 'Z')) ? true : false)
 #define isSpace(X) ((X) == ' ' ? true : false)
 #define isEos(X) ((X) == EOF ? true : false) // end of input stream
 #define SRC_DATA 256*256 
@@ -20,6 +19,10 @@
 void intToStr(int number, char** result) {
 	*result = malloc(((int)floor(log10(abs(number))) + 1));
 	sprintf(*result, "%d", number);
+}
+
+bool isLetter(int currChar) {
+    return ((currChar) >= 'a' && (currChar) <= 'z') || ((currChar) >= 'A' && (currChar) <= 'Z');
 }
 
 bool isAlphanumeric(int currChar) {
@@ -50,14 +53,14 @@ STATEMENT:
          | FUNCTION_CALL)}
 
 PRIMARY_EXPRESSION: 
-                  TOK_currStringIFIER 
+                  TOK_IDENTIFIER 
                   | NUMBER
 
 EXPRESSION_STATEMENT: (PRIMARY_EXPRESSION | PRIMARY_EXPRESSION (TOK_MULT | TOK_DIV | TOK_PLUS | TOK_MINUS) EXPRESSION_STATEMENT) TOK_SMCL
 
-ASSIGNMENT_STATEMENT: TOK_currStringIFIER TOK_ASSIGN (EXPRESSION_STATEMENT | FUNCTION_CALL) TOK_SMCL
+ASSIGNMENT_STATEMENT: TOK_IDENTIFIER TOK_ASSIGN (EXPRESSION_STATEMENT | FUNCTION_CALL) TOK_SMCL
 
-DECLARE_STATEMENT: TYPE_SPECIFIER TOK_currStringIFIER (ASSIGNMENT_STATEMENT | TOK_SMCL)
+DECLARE_STATEMENT: TYPE_SPECIFIER TOK_IDENTIFIER (ASSIGNMENT_STATEMENT | TOK_SMCL)
 
 BOOLEAN_EXPRESSION: PRIMARY_EXPRESSION ('==' | '<=' | '<' | '>=' | '>' | '!=') PRIMARY_EXPRESSION
 
@@ -67,9 +70,9 @@ FUNCTION_DECLARATION:
 
 FUNCTION_DEFINITION:
 
-FUNCTION_CALL: TOK_currStringIFIER '(' [TOK_currStringIFIER | NUMBER | STRING | ARRAY] { TOK_COMMA (TOK_currStringIFIER | NUMBER | STRING | ARRAY)} ')' TOK_SMCL
+FUNCTION_CALL: TOK_IDENTIFIER '(' [TOK_IDENTIFIER | NUMBER | STRING | ARRAY] { TOK_COMMA (TOK_IDENTIFIER | NUMBER | STRING | ARRAY)} ')' TOK_SMCL
 
-RETURN: 'return' (TOK_currStringIFIER | DIGIT | BOOLEAN | POINTER) TOK_SMCL
+RETURN: 'return' (TOK_IDENTIFIER | DIGIT | BOOLEAN | POINTER) TOK_SMCL
 
 ARRAY: '[' [TOK_PLUS | TOK_MINUS] NUMBER {TOK_COMMA [TOK_PLUS | TOK_MINUS] NUMBER } ']'
 
@@ -79,7 +82,7 @@ STRING: '"' ({LETTER | DIGIT}) '"'
 
 BOOLEAN: 'true' | 'false'
 
-POINTER: TOK_MULT {TOK_currStringIFIER}
+POINTER: TOK_MULT {TOK_IDENTIFIER}
 
 TYPE_SPECIFIER: 'int' 
               | 'double'
@@ -142,9 +145,9 @@ typedef struct token {
   int value;
 } Token;
 
-char* currString = NULL;
+char* currString = NULL; // holds the current string read from the stream
 
-Token currToken = {0,0, NULL};
+Token currToken = {0,0};
 
 void error(int token) {
     printf("error: expected %d token ", token);
@@ -175,7 +178,7 @@ enum { // terminal symbols
   TOK_ROUND_BRACKET_CLOSE, // ')'
   TOK_TYPE_SPECIFIER, // 'int', 'double' 
   TOK_ASSIGN, // =
-  TOK_currStringIFIER, // variable
+  TOK_IDENTIFIER, // variable
   TOK_INT, // int
   TOK_CURLY_BRACKET_OPEN, // '{'
   TOK_CURLY_BRACKET_CLOSE, // '{'
@@ -197,16 +200,14 @@ int precedenceTable[] = {
 };
 enum { 
     op_PROGRAM,
-    op_STATEMENT,
     op_MOD,
     op_DIV,
     op_MULT,
     op_PLUS,
     op_MINUS,
-    op_TYPE,
     op_DECLARE,
     OP_ASSIGN,
-    op_currStringIFIER,
+    op_IDENTIFIER,
     op_INT,
 };
 
@@ -222,17 +223,18 @@ int getTypeSpecifier(char* type) {
 typedef struct entry {
     int index;
     char* name;
-    int type; // 0-int 1-double
+    int type_specifier; // 0-int 1-double
+    int type; // 0-variable 1-function 
     int scope; // 0- global 1-local/function
 } ENTRY;
 
-ENTRY SymbolTable[MAX_SYMBOL_TABLE_SIZE];
-int SymbolTableIndex = 0;
+ENTRY* SymbolTable[MAX_SYMBOL_TABLE_SIZE];
+int symbolTableIndex = 0;
 
 /*
 return: the index in the tabel of the new symbol
 */
-int addSymbolEntry(char* name, char* type) {
+int addSymbolEntry(char* name, char* type_specifier, int type) {
     ENTRY* e = (ENTRY*) malloc(sizeof(ENTRY));
 
     if(e == NULL) {
@@ -240,20 +242,53 @@ int addSymbolEntry(char* name, char* type) {
         exit(1);
     }
 
-    e->index = SymbolTableIndex++;
+    e->index = symbolTableIndex;
     e->name = currString;
-    e->type = getTypeSpecifier(type);
+    e->type_specifier= getTypeSpecifier(type_specifier);
+    e->type = type;
 
-    // determine scope based on ast parent
+    SymbolTable[symbolTableIndex] = e;
+
+    // determine scope based on AST parent
     // program parent -> global
     // function parent -> local
+    // add it global for the moment
+    e->scope = 0;
+
+    return symbolTableIndex++;
 }
 
 /*
-return: true if symbol exists in the table, false otherwise
+return: the ENTRY if the symbol exists in the table or null otherwise
 */
-bool isSymbol(ENTRY e) {
-    return true;
+ENTRY* lookupSymbol(int index) {
+    /*
+    for(int i = 0; i < symbolTableIndex; i++) {
+        if(!strcmp(name, SymbolTable[symbolTableIndex]->name)) {
+           return SymbolTable[symbolTableIndex];
+        }
+    }
+    */
+    if(index >= MAX_SYMBOL_TABLE_SIZE) {
+        printf("invalid symbol table index!");
+        exit(1);
+    }
+    return SymbolTable[index];
+}
+
+/*
+return: the index of the symbol
+*/
+int getSymbolIndex(char* name) {
+    int index = -1;
+    for(int i = 0; i < symbolTableIndex; i++) {
+        if(!strcmp(name, SymbolTable[i]->name)) {
+           index = SymbolTable[i]->index;
+           break;
+        }
+    } 
+
+    return index;
 }
 
 typedef struct ast {
@@ -292,16 +327,15 @@ AST* makeProgramAST (AST* left) {
   return makeAST(op_PROGRAM, 0, left, NULL, NULL);
 };
 
-AST* makeStatementAST (AST* left) {
-  return makeOneChildAST(op_STATEMENT,0, left);
-};
-
 AST* makeArithmeticExpressionAST (int op,AST* left, AST* right) {
   return makeAST(op, 0, left, NULL, right);
 };
 
-AST* makeDeclareAST (int op,AST* left,AST* mid, AST* right) {
-  return makeAST(op, 0, left, mid, right);
+/*
+left -> expression
+*/
+AST* makeDeclareAST (int op,int symbolIndex, AST* left) {
+  return makeAST(op, symbolIndex, left, NULL, NULL);
 };
 
 AST* makeAssignmentAST (int op,AST* left,AST* mid, AST* right) {
@@ -309,16 +343,20 @@ AST* makeAssignmentAST (int op,AST* left,AST* mid, AST* right) {
 };
 
 AST* makePrimaryExpressionAST () {
-    switch(currToken.token) {
-        case TOK_INT:
-            return makeOneChildAST(op_INT,currToken.value, NULL);
-            break;
-        case TOK_currStringIFIER:
-            return makeOneChildAST(op_currStringIFIER,0, NULL);
-            break;
-        default:
-            printf("error: invalid token: expected %s %s", "int", "<currStringifier-name>");
+    if(currToken.token == TOK_INT) {
+        return makeOneChildAST(op_INT,currToken.value, NULL);
+    }
+    else if(currToken.token == TOK_IDENTIFIER) {
+        int identIndex = getSymbolIndex(currString);
+        if(identIndex == -1) {
+            printf("error: symbol %s is not defined!", currString);
             exit(1);
+        }
+        return makeOneChildAST(op_IDENTIFIER,identIndex, NULL);
+    }
+    else {
+        printf("error: invalid token: expected %s %s", "int", "<currStringifier-name>");
+        exit(1);
     }
 };
 
@@ -344,8 +382,8 @@ void getNextToken() {
     while (isSpace(currChar) || currChar == '\n' || currChar == '\t' ) // skip white space and newline
         currChar = fgetc(fptr);
     
-    if(currChar == '_' || isAlphanumeric(currChar)) {
-        // read the whole TOK_currStringIFIER until space
+    if(currChar == '_' || isLetter(currChar)) {
+        // read the whole TOK_IDENTIFIER until space
         currString = (char*) malloc(MAX_STRING_SIZE + 1);
         int i = 0;
         do {
@@ -362,8 +400,8 @@ void getNextToken() {
         if(!strcmp(currString, "int")) {
             currToken.token = TOK_TYPE_SPECIFIER;
         }
-        else { //it's an currStringifier
-            currToken.token = TOK_currStringIFIER;
+        else { //it's an identifier
+            currToken.token = TOK_IDENTIFIER;
         }
 
         return;
@@ -500,7 +538,7 @@ AST* expressionStatement(int previousTokenPrecedence) {
 
     // build the right tree accordingly
     while(precedenceTable[localToken] < previousTokenPrecedence) {
-        getNextToken(); // either ( or int/currStringifier
+        getNextToken(); // either ( or int/identifier
 
         if(accept(TOK_ROUND_BRACKET_OPEN)) {
             int roundBracketPrecendene = precedenceTable[TOK_ROUND_BRACKET_OPEN];
@@ -517,7 +555,7 @@ AST* expressionStatement(int previousTokenPrecedence) {
             while(currToken.token != TOK_SMCL && currToken.token != TOK_ROUND_BRACKET_CLOSE && precedenceTable[currToken.token] < localToken) {
                 //run again the loop and return the correct right, a tree where the currToken.token has lower or equal precedence to localToken
                 int newLocalToken = currToken.token;
-                getNextToken(); // int/currStringifier or could be followed by one or many (
+                getNextToken(); // int/identifier or could be followed by one or many (
                 AST* newRight = expressionStatement(precedenceTable[localToken]);
                 right = makeArithmeticExpressionAST(getArithmeticOp(newLocalToken), right, newRight);
             } 
@@ -541,7 +579,41 @@ AST* expressionStatement(int previousTokenPrecedence) {
 }
 
 AST* declareStatement() {
-    
+    char* typeSpecifier = currString; // save the type specifier
+    char* identifierName = NULL;
+
+    getNextToken(); // get the identifier name
+
+    if(accept(TOK_IDENTIFIER)) {
+        identifierName = currString;
+    }
+    else 
+        error(TOK_IDENTIFIER);
+
+    // add the symbol to the table
+    int symbolIndex = addSymbolEntry(identifierName, typeSpecifier, 0); // 0-variable until functions are implemented
+
+    getNextToken(); // either ';' or '='
+
+    if(accept(TOK_SMCL)) {
+        return makeDeclareAST(op_DECLARE,symbolIndex, NULL);
+    }
+    else if(accept(TOK_ASSIGN)) {
+        getNextToken();
+        if(accept(TOK_INT) || accept(TOK_IDENTIFIER)) {
+            AST* expr = expressionStatement(4);
+            return makeDeclareAST(op_DECLARE,symbolIndex, expr);
+        }
+        else {
+            printf("error: invalid token: expected %s or %s", "number", "identifier");
+            exit(1);
+        }
+
+    }
+    else {
+        printf("error: invalid token: expected %c or %c", ';', '=');
+        exit(1);
+    }
 }
 
 AST* assignmentStatement() {
@@ -557,9 +629,6 @@ AST* statement() {
     AST* ast = NULL;
 
     switch(currToken.token) {
-        case TOK_INT:
-            ast = expressionStatement(4);
-            break;
         case TOK_IF:
             ast = selectionStatement();
             break;
@@ -610,7 +679,7 @@ AST* parser() {
  * 
  */
 
-char* const generalPurposeRegisters[]         = {"rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi"};
+char* const generalPurposeRegisters[]         = {"rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi", "rip"};
 char* const addedPurposeRegisters[]           = {"r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"};
 
 int availableGeneralPurposeRegisters[] = {0,0,0,0,0,0,0,0};
@@ -647,7 +716,7 @@ void write_number(int intNumber) {
 }
 
 void write_memory(char* name) { //[name]
-    fwrite(" [", 1, 1, ofptr);
+    fwrite("[", 1, 1, ofptr);
     fwrite(name, strlen(name), 1, ofptr);
     fwrite("]", 1, 1, ofptr);
 }
@@ -664,7 +733,9 @@ mov <mem>,<const>
 
 destName: name of left side reg/mem
 fromName: name of right side reg/mem or empty for const
-flag: 0-reg 1-mem 2-const
+flagDest: 0-reg 1-mem 2-data[reg]
+flagFrom: 0-reg 1-mem 2-const 3-dataName[reg]
+dataName: label from .data section
 */
 
 void asm_mov_write(char* destName,char* fromName,int flagDest,int flagFrom, int con) { 
@@ -682,8 +753,14 @@ void asm_mov_write(char* destName,char* fromName,int flagDest,int flagFrom, int 
     else if(flagDest == 1) { // memory
         write_memory(destName);
     }
+    else if(flagDest == 2) { // data[reg]
+        char* qwordPtr = "QWORD PTR ";
+        fwrite(qwordPtr, strlen(qwordPtr), 1, ofptr);
+        fwrite(destName, strlen(destName), 1, ofptr);
+        write_memory(generalPurposeRegisters[8]);
+    }
     else {
-        printf("error: invalid dest flag in asm_mov!");
+        printf("error: invalid dest flag %d in asm_mov!", flagDest);
         exit(1);
     }
 
@@ -699,8 +776,12 @@ void asm_mov_write(char* destName,char* fromName,int flagDest,int flagFrom, int 
         write_number(con);
         
     }
+    else if(flagFrom == 3) { // data[reg]
+        fwrite(fromName, strlen(fromName), 1, ofptr);
+        write_memory(generalPurposeRegisters[8]);
+    }
     else {
-        printf("error: invalid from flag in asm_mov!");
+        printf("error: invalid from flag %d in asm_mov! ", flagFrom);
         exit(1);
     }
 }
@@ -886,6 +967,7 @@ idiv <mem>
 flag: 0-reg32 1-mem
 */
 void asm_idiv_write(char* name, int flag) {
+
     // asm_mov_write(generalPurposeRegisters[2], NULL, 0, 2, 0); for positive rax
     // asm_mov_write(generalPurposeRegisters[2], NULL, 0, 2, -1); for negative rax
     // zeroing rdx with negative dividend leads to large positive Floating point exception so just sign extend rdx
@@ -906,6 +988,13 @@ void asm_idiv_write(char* name, int flag) {
 
 }
 
+void asm_comm_Write(char* name, char* size) {
+    char* comm = "\n\t.comm ";
+    fwrite(comm, strlen(comm), 1, ofptr);
+    fwrite(name, strlen(name), 1, ofptr);
+    fwrite(size, strlen(size), 1, ofptr);
+}
+
 int parseArithmeticTree(AST* ast) {
     if(ast->left == NULL) {
         int op = ast->op;
@@ -914,9 +1003,12 @@ int parseArithmeticTree(AST* ast) {
             asm_mov_write(addedPurposeRegisters[reg],NULL,0, 2, ast->value);
             return reg;
         }
-        else if(op == op_currStringIFIER) {
+        else if(op == op_IDENTIFIER) {
             //return getcurrStringifierValue(); not yet implemented
-            return -1;
+            int reg = getAvailableRegister();
+            ENTRY* e = lookupSymbol(ast->value);
+            asm_mov_write(addedPurposeRegisters[reg],e->name,0, 3, ast->value);
+            return reg;
         }
     }
 
@@ -962,7 +1054,7 @@ int optimized_parseArithmeticTree(AST* ast) {
         switch(ast->op) {
             case op_INT:
                 return ast->value;
-            case op_currStringIFIER:
+            case op_IDENTIFIER:
                 //return getcurrStringifierValue(); not yet implemented
                 break;
         }
@@ -1013,12 +1105,64 @@ void writePreamble() {
     fwrite(preamble, strlen(preamble), 1 , ofptr);
 }
 
-void writeExpression(AST* ast) {
-    printf("expr value: %d\n", optimized_parseArithmeticTree(ast->left->left));
-    int resultReg = parseArithmeticTree(ast->left->left);
-    printf("register that has the expr val:%s\n", addedPurposeRegisters[resultReg]);
+void parseDeclarationAst(AST* ast) {
+    // all declarations are global until functions are added
+    ENTRY* e = lookupSymbol(ast->value);
 
-    asm_mov_write(generalPurposeRegisters[0],addedPurposeRegisters[resultReg],0, 0, 0);
+    char* varSize;
+    switch(e->type_specifier) {
+        case 0: // int
+            varSize = ",4,4";
+            break;
+        case 1: // double
+            varSize = ",8,8";
+            break;
+    }
+
+    asm_comm_Write(e->name, varSize);
+
+    if(ast->left) {
+        //printf("expr value: %d\n", optimized_parseArithmeticTree(ast->left));
+        int resultReg = parseArithmeticTree(ast->left);
+        printf("register that has the expr val:%s\n", addedPurposeRegisters[resultReg]);
+        asm_mov_write(e->name,addedPurposeRegisters[resultReg],2, 0, 0);
+        availableAddedPurposeRegisters[resultReg] = 0;
+    }
+}
+
+void parseAssignAst(AST* ast) {
+
+
+    // free all registers used in declaration
+}
+
+void parseProgramAst(AST* ast) {
+    AST* currStatementAst = ast->left;
+    // parse each statement
+    while(currStatementAst != NULL) {
+        // check ast op code 
+        switch(currStatementAst->op) {
+            case op_DECLARE:
+                parseDeclarationAst(currStatementAst);
+                break;
+            case OP_ASSIGN:
+                parseAssignAst(currStatementAst);
+                break;
+            default:
+                printf("error: invalid statement AST! expected %s or %s", "op_DECLARE", "op_ASSIGN");
+                exit(1);
+        }
+        currStatementAst = currStatementAst->right;
+    }
+}
+
+void writeExpression(AST* ast) {
+    //printf("expr value: %d\n", optimized_parseArithmeticTree(ast->left));
+    //int resultReg = parseArithmeticTree(ast->left);
+    //printf("register that has the expr val:%s\n", addedPurposeRegisters[resultReg]);
+
+    //asm_mov_write(generalPurposeRegisters[0],addedPurposeRegisters[resultReg],0, 0, 0);
+    //addedPurposeRegisters[resultReg] = 0;
 }
 
 void writePostamble() {
@@ -1058,7 +1202,7 @@ int main(int argc, char **argv) {
     }
 
     writePreamble();
-    writeExpression(parser());
+    parseProgramAst(parser());
     writePostamble();
 
     cleanUp();
