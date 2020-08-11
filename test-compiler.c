@@ -16,7 +16,6 @@
 #define SRC_DATA 256*256 
 #define MAX_STRING_SIZE 32
 #define MAX_NUMBER_SIZE 32
-#define MAX_SYMBOL_TABLE_SIZE 512
 
 void intToStr(int number, char** result) {
 	*result = malloc(((int)floor(log10(abs(number))) + 1));
@@ -223,14 +222,6 @@ int getTypeSpecifier(char* type) {
         return 2;
 }
 
-typedef struct entry {
-    int index;
-    char* name;
-    int type_specifier; // 0-int 1-double
-    int type; // 0-variable 1-function 
-    int scope; // 0- global 1-local 2-local function argument
-    int owner; // for scope 1 and 2 the owner function symbol id else -1 if owner is program
-} ENTRY;
 
 ENTRY* SymbolTable[MAX_SYMBOL_TABLE_SIZE];
 int symbolTableIndex = 0;
@@ -242,7 +233,7 @@ int getSymbolScope(int owner) {
 /*
 return: the index in the tabel of the new symbol
 */
-int addSymbolEntry(char* name, char* type_specifier, int type,int scope, int owner) {
+int addSymbolEntry(ENTRY** table, int* size,char* name, char* type_specifier, int type,int scope, int owner) {
     ENTRY* e = (ENTRY*) malloc(sizeof(ENTRY));
 
     if(e == NULL) {
@@ -250,44 +241,111 @@ int addSymbolEntry(char* name, char* type_specifier, int type,int scope, int own
         exit(1);
     }
 
-    e->index = symbolTableIndex;
+    int oldSize = *size;
+
+    e->index = oldSize;
     e->name = currString;
     e->type_specifier= getTypeSpecifier(type_specifier);
     e->type = type;
     e->scope = scope;
     e->owner = owner;
+    e->localSymbolTableIndex = 0;
 
-    SymbolTable[symbolTableIndex] = e;
+    table[oldSize] = e;
 
-    return symbolTableIndex++;
+    *size += 1;
+
+    return *size;
 }
+
+/* 
+Finds the specific table of the owner and adds the symbol in it
+*/
+int addSymbolToTheOwnersTable(int owner,char* identifierName, char* typeSpecifier, int type, int scope) {
+	if(owner == 0) {
+        // only add the symbol if it wasnt declared already
+        if(getSymbolIndex(SymbolTable,symbolTableIndex, identifierName) != -1) {
+            printf("error: duplicate symbol %s", identifierName);
+            exit(1);
+        }
+
+        int symbolIndex = addSymbolEntry(SymbolTable,symbolTableIndex,identifierName, typeSpecifier, type, getSymbolScope(owner), owner);
+        return symbolIndex;
+    }
+    else {
+        ENTRY* functionEntry = lookupSymbol(SymbolTable, owner);
+        ENTRY** table = functionEntry->localSymbolTable;
+        int size = functionEntry->localSymbolTableIndex;
+        // only add the symbol if it wasnt declared already
+        if(getSymbolIndex(table,size, identifierName) != -1) {
+            printf("error: duplicate symbol %s", identifierName);
+            exit(1);
+        }
+
+        int symbolIndex = addSymbolEntry(table,size,identifierName, typeSpecifier, type, scope, owner);
+        return symbolIndex;
+    }
+}
+
+/* 
+Basic syntax analysis 
+Checks where the current string read was declared previously, local table has precedence over global
+return : the index in the table of the declared identifier
+*/
+
+int identifierWasDeclared(int owner) {
+    if(owner == 0) { // should be removed as only constant values are allowed as rvalue in global variables
+        int globalIndex = getSymbolIndex(SymbolTable, symbolTableIndex, currString);
+        if(globalIndex == -1) {
+            printf("error: symbol %s is not defined!", currString);
+            exit(1);
+        }
+        else {
+            return globalIndex;
+        }
+    }
+    else { // owner is a function
+        // then search in the local owner table
+        ENTRY* functionEntry = lookupSymbol(SymbolTable, owner);
+        ENTRY** table = functionEntry->localSymbolTable;
+        int size = functionEntry->localSymbolTableIndex;
+        int localIndex = getSymbolIndex(table, size, currString);
+        if(localIndex == -1) { // // search maybe the variable is global
+            int globalIndex = getSymbolIndex(SymbolTable, symbolTableIndex, currString);
+            if(globalIndex == -1) {
+                printf("error: symbol %s is not defined!", currString);
+                exit(1);
+            }
+            else {
+                return globalIndex;
+            }
+        }
+        else 
+            return localIndex;
+    }
+}
+
+
 
 /*
 return: the ENTRY if the symbol exists in the table or null otherwise
 */
-ENTRY* lookupSymbol(int index) {
-    /*
-    for(int i = 0; i < symbolTableIndex; i++) {
-        if(!strcmp(name, SymbolTable[symbolTableIndex]->name)) {
-           return SymbolTable[symbolTableIndex];
-        }
-    }
-    */
+ENTRY* lookupSymbol(ENTRY** table, int index) {
     if(index >= MAX_SYMBOL_TABLE_SIZE) {
         printf("invalid symbol table index!");
         exit(1);
     }
-    return SymbolTable[index];
+    return table[index];
 }
 
 /*
 return: the index of the symbol
 */
-int getSymbolIndex(char* name) {
+int getSymbolIndex(ENTRY** table, int size,char* name) {
     int index = -1;
-    for(int i = 0; i < symbolTableIndex; i++) {
-        if(!strcmp(name, SymbolTable[i]->name)) {
-           index = SymbolTable[i]->index;
+    for(int i = 0; i < size; i++) {
+        if(!strcmp(name, table[i]->name)) {
+           index = table[i]->index;
            break;
         }
     } 
@@ -338,16 +396,16 @@ AST* makeAssignmentAST (int op,int symbolIndex, AST* left) {
   return makeAST(op, symbolIndex, left, NULL, NULL);
 };
 
-AST* makePrimaryExpressionAST () {
+/* 
+owner: the index in the symbol table of the owner of this expression, 0-program , X-function
+*/
+AST* makePrimaryExpressionAST (int owner) {
     if(currToken.token == TOK_INT) {
         return makeOneChildAST(op_INT,currToken.value, NULL);
     }
     else if(currToken.token == TOK_IDENTIFIER) {
-        int identIndex = getSymbolIndex(currString);
-        if(identIndex == -1) {
-            printf("error: symbol %s is not defined!", currString);
-            exit(1);
-        }
+        int identIndex = identifierWasDeclared(owner);
+
         return makeOneChildAST(op_IDENTIFIER,identIndex, NULL);
     }
     else {
@@ -505,14 +563,14 @@ int getArithmeticOp(int t) {
     return arithmeticOp;
 }
 
-AST* expressionStatement(int previousTokenPrecedence) {
+AST* expressionStatement(int previousTokenPrecedence, int owner) {
     AST* left,*right;
 
     int localToken;
 
     // first check if its TOK_ROUND_BRACKET_OPEN
     if(!accept(TOK_ROUND_BRACKET_OPEN)) { // skip
-        left = makePrimaryExpressionAST();
+        left = makePrimaryExpressionAST(owner);
 
         getNextToken();
 
@@ -548,7 +606,7 @@ AST* expressionStatement(int previousTokenPrecedence) {
         if(accept(TOK_ROUND_BRACKET_OPEN)) {
             int roundBracketPrecendene = precedenceTable[TOK_ROUND_BRACKET_OPEN];
             getNextToken(); // get the int/currStringifier or could be one or many (
-            right = expressionStatement(roundBracketPrecendene);
+            right = expressionStatement(roundBracketPrecendene, owner);
             if(currToken.token != TOK_ROUND_BRACKET_CLOSE) { // we're expeting a closing ) token
                 error(TOK_ROUND_BRACKET_CLOSE);
             }
@@ -561,12 +619,12 @@ AST* expressionStatement(int previousTokenPrecedence) {
                 //run again the loop and return the correct right, a tree where the currToken.token has lower or equal precedence to localToken
                 int newLocalToken = currToken.token;
                 getNextToken(); // int/identifier or could be followed by one or many (
-                AST* newRight = expressionStatement(precedenceTable[localToken]);
+                AST* newRight = expressionStatement(precedenceTable[localToken], owner);
                 right = makeArithmeticExpressionAST(getArithmeticOp(newLocalToken), right, newRight);
             } 
         }
         else 
-            right = expressionStatement(precedenceTable[localToken]);
+            right = expressionStatement(precedenceTable[localToken], owner);
         
         left = makeArithmeticExpressionAST(getArithmeticOp(localToken), left, right);
 
@@ -607,14 +665,15 @@ AST* declareStatement(int owner) {
     getNextToken(); // either ';' or '=' or '(' 
 
     if(accept(TOK_SMCL)) {
-        symbolIndex = addSymbolEntry(identifierName, typeSpecifier, 0, getSymbolScope(owner), owner);
+        // add the symbol to the owner's table and return a declare AST back
+        int symbolIndex = addSymbolToTheOwnersTable(owner, identifierName, typeSpecifier, 0, getSymbolScope(owner));
         return makeDeclareAST(op_DECLARE,symbolIndex, NULL, NULL, NULL);
     }
     else if(accept(TOK_ASSIGN)) {
-        symbolIndex = addSymbolEntry(identifierName, typeSpecifier, 0, getSymbolScope(owner), owner); 
+        symbolIndex = addSymbolToTheOwnersTable(owner, identifierName, typeSpecifier, 0, getSymbolScope(owner));
         getNextToken(); // expression follows
         if(accept(TOK_INT) || accept(TOK_IDENTIFIER)) {
-            AST* expr = expressionStatement(4);
+            AST* expr = expressionStatement(4, owner);
             return makeDeclareAST(op_DECLARE,symbolIndex, expr, NULL, NULL);
         }
         else {
@@ -636,7 +695,7 @@ AST* declareStatement(int owner) {
         }
 
         // register the function symbol in the table
-        symbolIndex = addSymbolEntry(identifierName, typeSpecifier, 1, getSymbolScope(owner), owner); // scope 0 because functions can only be global for the moment
+        symbolIndex = addSymbolToTheOwnersTable(owner, identifierName, typeSpecifier, 1, getSymbolScope(owner));
 
         getNextToken(); // get the first argument type specifier
         // create the chain of arguments
@@ -659,8 +718,8 @@ AST* declareStatement(int owner) {
             else 
                 error(TOK_IDENTIFIER);
 
-            addSymbolEntry(identifierName, typeSpecifier , 0, 2,  symbolIndex); // first add the new argument in the local symbol table of the function
-            AST* currArgAST = makePrimaryExpressionAST();
+            int argIndex = addSymbolToTheOwnersTable(owner, identifierName, typeSpecifier, 0, 2);
+            AST* currArgAST = makeDeclareAST(op_DECLARE,argIndex, NULL, NULL, NULL);
 
             if(firstArgAst == NULL) {
                 firstArgAst = currArgAST;
@@ -681,9 +740,9 @@ AST* declareStatement(int owner) {
             error(TOK_CURLY_BRACKET_OPEN);
 
         getNextToken(); 
-        // create the chain of statements untill '}'
+        // create the chain of statements contained in the function untill '}'
         while(currToken.token != TOK_CURLY_BRACKET_CLOSE) {
-            AST* currStmtAst = statement();
+            AST* currStmtAst = statement(symbolIndex); // owner is the function
             if(firstStatementAst == NULL) {
                 firstStatementAst = currStmtAst;
                 prevStatementAst = currStmtAst;
@@ -703,12 +762,9 @@ AST* declareStatement(int owner) {
     }
 }
 
-AST* assignmentStatement() {
-    int identIndex = getSymbolIndex(currString);
-    if(identIndex == -1) {
-            printf("error: symbol %s is not defined!", currString);
-            exit(1);
-    }
+AST* assignmentStatement(int owner) {
+    // basic syntax analysis
+    int identIndex = identifierWasDeclared(owner);
 
     getNextToken(); // '='
 
@@ -717,7 +773,7 @@ AST* assignmentStatement() {
     }
 
     getNextToken(); 
-    AST* expr = expressionStatement(4);
+    AST* expr = expressionStatement(4, owner);
     return makeAssignmentAST(OP_ASSIGN, identIndex, expr);
 }
 
@@ -726,18 +782,20 @@ AST* selectionStatement() {
 }
 
 
-AST* statement() {
+AST* statement(int owner) {
     AST* ast = NULL;
 
     switch(currToken.token) {
         case TOK_IF:
-            ast = selectionStatement();
+            // not yet implemeneted
+            // basic syntax analysis: if the owner is 0 aka program throw error
+            //ast = selectionStatement();
             break;
         case TOK_TYPE_SPECIFIER:
-            ast = declareStatement(0);
+            ast = declareStatement(owner);
             break;
         case TOK_IDENTIFIER: // either an assignment or function call 
-            ast = assignmentStatement();
+            ast = assignmentStatement(owner);
             break;
         default:
             printf("error: invalid token; expected %s or %s or %c or %s", "int", "<currStringifier-name>", '{', "if");
@@ -751,7 +809,7 @@ AST* program() {
     AST* firstStatement = NULL;
     AST* prevStatement = NULL;
     while(currToken.token != TOK_EOF) {
-        AST* stmt = declareStatement(0); // program has a series of declarations
+        AST* stmt = declareStatement(0); // program owns a series declarations
         if(firstStatement == NULL) {
             firstStatement = stmt;
             prevStatement = stmt;
@@ -1208,10 +1266,54 @@ void writePreamble() {
     fwrite(preamble, strlen(preamble), 1 , ofptr);
 }
 
-void parseDeclarationAst(AST* ast) {
-    // all declarations are global until functions are added
+void parseDeclarationAst(AST* ast, int owner) {
     ENTRY* e = lookupSymbol(ast->value);
+    int scope = e->scope;
+    int type = e->type;
+    int typeSpecifier = e->type_specifier;
+    int owner = e->owner;
 
+    if(scope == 0) { // global declaration
+        if(type == 0) { // variable
+            // check if its initialized or not
+            if(ast->left) { // initialized add it on .data segment
+
+            } 
+            else { // unnitialized add it on .bss segment
+
+            }
+        }
+        else if(type == 1) { // function
+
+        }
+        else {
+            printf("error: invalid global declaration type! expected variable or function");
+            exit(1);
+        }
+    }
+    else if(scope == 1) { // local declaration
+        if(type == 0) { // variable
+
+        }
+        else if(type == 1) { // function
+            printf("error: functions cant be declared locally!");
+            exit(1);
+        }
+        else {
+            printf("error: invalid local declaration type! expected variable!");
+            exit(1);
+        }
+    } 
+    else if(type == 2) {// local function argument
+        // local function argument declarations are not parsed on their own
+        return;
+    }
+    else {
+        printf("error: invalid declaration scope");
+        exit(1);
+    }
+
+    /*
     char* varSize;
     switch(e->type_specifier) {
         case 0: // int
@@ -1231,14 +1333,26 @@ void parseDeclarationAst(AST* ast) {
         asm_mov_write(e->name,addedPurposeRegisters[resultReg],2, 0, 0);
         availableAddedPurposeRegisters[resultReg] = 0;
     }
+    */
 }
 
-void parseAssignAst(AST* ast) {
-    ENTRY* e = lookupSymbol(ast->value);
+void parseAssignAst(AST* ast, int owner) {
+    ENTRY* e = NULL;
+    if(owner == 0) {
+        e = lookupSymbol(SymbolTable,ast->value);
+    }
+    else { // owner isn't program, first get the function's ENTRY and then get the ast's ENTRY
+        e = lookupSymbol(SymbolTable,owner);
+        ENTRY** ownersTable = e->localSymbolTable;
+        int ownersIndex = e->localSymbolTableIndex;
+        e = lookupSymbol(SymbolTable,ast->value);
+    }
 
     int resultReg = parseArithmeticTree(ast->left);
     printf("register that has the expr val:%s\n", addedPurposeRegisters[resultReg]);
-    asm_mov_write(e->name,addedPurposeRegisters[resultReg],2, 0, 0);
+    // check whether the symbol is global or local 
+
+    //asm_mov_write(e->name,addedPurposeRegisters[resultReg],2, 0, 0);
     availableAddedPurposeRegisters[resultReg] = 0;
 
 }
@@ -1250,10 +1364,10 @@ void parseProgramAst(AST* ast) {
         // check ast op code 
         switch(currStatementAst->op) {
             case op_DECLARE:
-                parseDeclarationAst(currStatementAst);
+                parseDeclarationAst(currStatementAst, 0);
                 break;
             case OP_ASSIGN:
-                parseAssignAst(currStatementAst);
+                parseAssignAst(currStatementAst, 0);
                 break;
             default:
                 printf("error: invalid statement AST! expected %s or %s", "op_DECLARE", "op_ASSIGN");
