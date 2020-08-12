@@ -222,6 +222,18 @@ int getTypeSpecifier(char* type) {
         return 2;
 }
 
+char* typeSpecifierToStr(int typeSpecifier) {
+    switch(typeSpecifier) {
+        case 0:
+            return "int";
+        case 1:
+            return "double";
+        default:
+            printf("error: undefined type specifier");
+            exit(1);
+    }
+}
+
 
 ENTRY* SymbolTable[MAX_SYMBOL_TABLE_SIZE];
 int symbolTableIndex = 0;
@@ -255,7 +267,7 @@ int addSymbolEntry(ENTRY** table, int* size,char* name, char* type_specifier, in
 
     *size += 1;
 
-    return *size;
+    return oldSize;
 }
 
 /* 
@@ -269,15 +281,16 @@ int addSymbolToTheOwnersTable(int owner,char* identifierName, char* typeSpecifie
             exit(1);
         }
 
-        int symbolIndex = addSymbolEntry(SymbolTable,symbolTableIndex,identifierName, typeSpecifier, type, getSymbolScope(owner), owner);
+        int symbolIndex = addSymbolEntry(SymbolTable,&symbolTableIndex,identifierName, typeSpecifier, type, getSymbolScope(owner), owner);
         return symbolIndex;
     }
     else {
         ENTRY* functionEntry = lookupSymbol(SymbolTable, owner);
         ENTRY** table = functionEntry->localSymbolTable;
-        int size = functionEntry->localSymbolTableIndex;
-        // only add the symbol if it wasnt declared already
-        if(getSymbolIndex(table,size, identifierName) != -1) {
+        int* size = &(functionEntry->localSymbolTableIndex);
+        // in a function we might use a global variable which needs to be copied over the local table of the function 
+        // so we skip the check as we already determined the symbol exists globally
+        if(getSymbolIndex(table,*size, identifierName) != -1 && scope != 0) { 
             printf("error: duplicate symbol %s", identifierName);
             exit(1);
         }
@@ -290,6 +303,7 @@ int addSymbolToTheOwnersTable(int owner,char* identifierName, char* typeSpecifie
 /* 
 Basic syntax analysis 
 Checks where the current string read was declared previously, local table has precedence over global
+if the local string is a global variable, we copy the global's variable entry table over the local function table
 return : the index in the table of the declared identifier
 */
 
@@ -317,7 +331,13 @@ int identifierWasDeclared(int owner) {
                 exit(1);
             }
             else {
-                return globalIndex;
+                /*either:
+                add a new symbol entry in the local table, with owner 0 and index poting to the index of the program's table
+                or just copy the symbol entry from the global to the local
+                here we use the latter */
+                ENTRY* pEntry = lookupSymbol(SymbolTable, globalIndex);
+                int pIndex = addSymbolToTheOwnersTable(owner,pEntry->name, typeSpecifierToStr(pEntry->type_specifier), pEntry->type, 0);
+                return pIndex;
             }
         }
         else 
@@ -718,7 +738,7 @@ AST* declareStatement(int owner) {
             else 
                 error(TOK_IDENTIFIER);
 
-            int argIndex = addSymbolToTheOwnersTable(owner, identifierName, typeSpecifier, 0, 2);
+            int argIndex = addSymbolToTheOwnersTable(symbolIndex, identifierName, typeSpecifier, 0, 2);
             AST* currArgAST = makeDeclareAST(op_DECLARE,argIndex, NULL, NULL, NULL);
 
             if(firstArgAst == NULL) {
@@ -748,7 +768,7 @@ AST* declareStatement(int owner) {
                 prevStatementAst = currStmtAst;
             }
             else {
-                prevStatementAst->mid = currStmtAst;
+                prevStatementAst->right = currStmtAst;
                 prevStatementAst = currStmtAst;
             }
             getNextToken();
@@ -1422,9 +1442,10 @@ int main(int argc, char **argv) {
         return -1;
     }
 
-    writePreamble();
-    parseProgramAst(parser());
-    writePostamble();
+    //writePreamble();
+    //parseProgramAst(parser());
+    parser();
+    //writePostamble();
 
     cleanUp();
 }
