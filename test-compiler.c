@@ -290,11 +290,11 @@ int addSymbolToTheOwnersTable(int owner,char* identifierName, char* typeSpecifie
 	if(owner == 0) {
         // only add the symbol if it wasnt declared already
         if(getSymbolIndex(SymbolTable,symbolTableIndex, identifierName) != -1) {
-            printf("error: duplicate symbol %s", identifierName);
+            printf("error: duplicate global symbol %s ", identifierName);
             exit(1);
         }
 
-        int symbolIndex = addSymbolEntry(SymbolTable,&symbolTableIndex,identifierName, typeSpecifier, type, getSymbolScope(owner), owner);
+        int symbolIndex = addSymbolEntry(SymbolTable,&symbolTableIndex,identifierName, typeSpecifier, type, scope, owner);
         return symbolIndex;
     }
     else {
@@ -303,9 +303,20 @@ int addSymbolToTheOwnersTable(int owner,char* identifierName, char* typeSpecifie
         int* size = &(functionEntry->localSymbolTableIndex);
         // in a function we might use a global variable which needs to be copied over the local table of the function 
         // so we skip the check as we already determined the symbol exists globally
-        if(getSymbolIndex(table,*size, identifierName) != -1 && scope != 0) { 
-            printf("error: duplicate symbol %s", identifierName);
-            exit(1);
+        int localSymbolIndex = getSymbolIndex(table,*size, identifierName);
+        if(localSymbolIndex != -1 && scope != 0) { 
+            ENTRY* duplicateSymbol = lookupSymbol(table, localSymbolIndex);
+            // if the duplicate symbol is global make it local
+            if(duplicateSymbol->scope == 0) {
+                // we assume both the global and the local have the same signature
+                // later we will completely overwrite the old table entry with the new one
+                duplicateSymbol->scope = 1;
+                return duplicateSymbol->index;
+            }
+            else { // else it's duplicated local,throw error
+                printf("error: duplicate local symbol %s in function %s ", identifierName, functionEntry->name);
+                exit(1);
+            }
         }
 
         int symbolIndex = addSymbolEntry(table,size,identifierName, typeSpecifier, type, scope, owner);
@@ -1248,6 +1259,7 @@ void parseDeclarationAst(AST* ast, int owner) {
             // check if its initialized or not
             if(ast->left) { // initialized add it on .data segment
                 int rValue = optimized_parseArithmeticTree(ast->left);
+                printf("global initialized symbol: constant rvalue %d ", rValue);
                 char* strValue = NULL;
                 intToStr(rValue, &strValue);
                 
@@ -1295,7 +1307,7 @@ void parseDeclarationAst(AST* ast, int owner) {
         if(type == 0) { // variable
             if(ast->left) { // initialized
                 int resultReg = parseArithmeticTree(ast->left, owner);
-                printf("local: register that has the expr val:%s\n", addedPurposeRegisters[resultReg]);
+                printf("\nlocal: register that has the expr val:%s", addedPurposeRegisters[resultReg]);
                 char destOperand[32];
                 char* srcOperand = addedPurposeRegisters[resultReg];;
                 char *offset = NULL;
@@ -1335,6 +1347,7 @@ void parseAssignAst(AST* ast, int owner) {
     // check whether the symbol is global or local 
     if(e->scope == 0) { // global
         int res = optimized_parseArithmeticTree(ast->left);
+        printf("\nassignment: constant rvalue %d ", res);
 
         intToStr(res, &srcOperand);
         sprintf(destOperand, "%s[%s]", e->name, specialPurposeRegisters[2]);
@@ -1342,7 +1355,7 @@ void parseAssignAst(AST* ast, int owner) {
     } 
     else if(e->scope == 1){ // local
         int resultReg = parseArithmeticTree(ast->left, owner);
-        printf("register that has the expr val:%s\n", addedPurposeRegisters[resultReg]);
+        printf("\nassignment: register that has the expr val:%s", addedPurposeRegisters[resultReg]);
         srcOperand = addedPurposeRegisters[resultReg];
 
         char *offset = NULL;
@@ -1354,7 +1367,7 @@ void parseAssignAst(AST* ast, int owner) {
     }
     else if(e->scope == 2) { // parameter
         int resultReg = parseArithmeticTree(ast->left, owner);
-        printf("register that has the expr val:%s\n", addedPurposeRegisters[resultReg]);
+        printf("\nassignment: register that has the expr val:%s", addedPurposeRegisters[resultReg]);
         srcOperand = addedPurposeRegisters[resultReg];
 
         char* offset = NULL;
@@ -1364,7 +1377,7 @@ void parseAssignAst(AST* ast, int owner) {
         availableAddedPurposeRegisters[resultReg] = 0;
     }
     else {
-        printf("error: invalid lvalue scope!");
+        printf("\nerror: invalid lvalue scope!");
         error(1);
     }
 }
