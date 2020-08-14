@@ -1,14 +1,6 @@
 #define MAX_SYMBOL_TABLE_SIZE 512
 
-/* AST */
-
-typedef struct ast {
-    int op;
-    int value;
-    struct ast* left;
-    struct ast* mid;
-    struct ast* right;
-} AST;
+#include "ast.h"
 
 AST* makeAST(int, int, AST*, AST*, AST*);
 
@@ -58,7 +50,6 @@ typedef struct entry {
     int localSymbolTableIndex;
 } ENTRY;
 
-int getSymbolScope(int);
 
 int addSymbolEntry(ENTRY**, int*, char*, char*, int, int, int);
 
@@ -69,3 +60,4 @@ int identifierWasDeclared(int);
 ENTRY* lookupSymbol(ENTRY**, int);
 
 int getSymbolIndex(ENTRY**, int,char*);
+

@@ -8,6 +8,7 @@
 #include <math.h>
 
 #include "parser.h"
+#include "codegen.h"
 
 #define isDigit(X) ((X) >= '0' && (X) <= '9' ? true : false)
 
@@ -222,6 +223,18 @@ int getTypeSpecifier(char* type) {
         return 2;
 }
 
+int getTypeSpecifierSize(int type) {
+	switch(type) {
+        case 0:
+            return 8;
+        case 1:
+            return 16;
+        default:
+            printf("error: undefined type specifier");
+            exit(1);
+    }
+}
+
 char* typeSpecifierToStr(int typeSpecifier) {
     switch(typeSpecifier) {
         case 0:
@@ -346,7 +359,6 @@ int identifierWasDeclared(int owner) {
 }
 
 
-
 /*
 return: the ENTRY if the symbol exists in the table or null otherwise
 */
@@ -356,6 +368,19 @@ ENTRY* lookupSymbol(ENTRY** table, int index) {
         exit(1);
     }
     return table[index];
+}
+
+/* Get the ENTRY from the owner's table */
+
+ENTRY* getEntryFromOwner(int owner, int index) {
+    if(owner == 0) {
+        return lookupSymbol(SymbolTable, index);
+    }
+    else {
+        // first get the owner's ENTRY and then get it's symbol table
+        ENTRY** ownersTable = lookupSymbol(SymbolTable, owner)->localSymbolTable;
+        return lookupSymbol(ownersTable, index);
+    }
 }
 
 /*
@@ -371,6 +396,69 @@ int getSymbolIndex(ENTRY** table, int size,char* name) {
     } 
 
     return index;
+}
+
+/* return the number of parameters the function has */
+int getNrOfParameters(ENTRY** table) {
+    int nr = 0;
+    ENTRY* tempE = lookupSymbol(table, nr);
+    while(tempE->scope == 2) {
+        tempE = lookupSymbol(table, ++nr);
+    }
+    return nr;
+}
+
+int getLocalStackSize(ENTRY** table, int tableSize) {
+    int start = getNrOfParameters(table);
+    int stackSize = 0;
+    for(int i = start; i < tableSize; i++) {
+        ENTRY* e = lookupSymbol(table, i);
+        if(e->scope == 0) { // skip global symbols
+            continue;
+        }
+        stackSize += getTypeSpecifierSize(e->type_specifier);
+    }
+    return stackSize;
+}
+
+/* return the offset of the function argument 
+index starts from 1
+*/
+int getArgOffset(ENTRY** table, int index) {
+    int offset = 0; 
+    for(int i = 0; i <= index; i++) {
+        ENTRY* e = lookupSymbol(table, i);
+        if(e->type != 2) {
+            printf("error: invalid argument index");
+            exit(1);
+        }
+        // later check if they are pointer variables
+        offset += getTypeSpecifierSize(e->type_specifier);
+    }
+
+    return offset;
+}
+
+/* return the offset of the local variable
+index starts from 1
+*/
+int getLocalOffset(ENTRY** table, int index) {
+    int start = 0;
+
+    // first get the first local index
+    start = getNrOfParameters(table);
+
+    int offset = 0; 
+    for(int i = start; i <= index; i++) {
+        ENTRY* e = lookupSymbol(table, i);
+        if(e->scope == 0) { // skip global symbols
+            continue;
+        }
+        // later check if they are pointer variables
+        offset += getTypeSpecifierSize(e->type_specifier);
+    }
+
+    return offset;
 }
 
 AST* makeAST(int op, int value, AST* left, AST* mid, AST* right) {
@@ -860,18 +948,24 @@ AST* parser() {
  * 
  */
 
-char* const generalPurposeRegisters[]         = {"rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi", "rip"};
+char* const specialPurposeRegisters[]         = {"rsp", "rbp", "rip", "rflags"};
+char* const generalPurposeRegisters[]         = {"rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi"};
 char* const addedPurposeRegisters[]           = {"r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"};
 
 int availableGeneralPurposeRegisters[] = {0,0,0,0,0,0,0,0};
 int availableAddedPurposeRegisters[] = {0,0,0,0,0,0,0,0};
 
-char* const dataMovementInstructions[]        = {"\n\tmov ", "\n\tpush ", "\n\tpov ", "\n\tlea "};
-char* const arithmeticAndLogicInstructions[]  = {"\n\tadd ", "\n\tsub ", "\n\tinc ", "\n\tdec ", "\n\timul ", "\n\tidiv ",
-                                                     "\n\tand ", "\n\tor ", "\n\txor ", "\n\tnot ", "\n\tneg ","\n\tshl ", "\n\tshr "};
-char* const convertInstructions[] = {"\n\tcwd ", "\n\tcdq", "\n\tcqo "};  
+char* const dataMovementInstructions[]        = {"mov", "push", "pov", "lea"};
+char* const arithmeticAndLogicInstructions[]  = {"add", "sub", "inc", "dec", "imul", "idiv",
+                                                     "and", "or", "xor", "not", "neg","shl", "shr"};
+char* const convertInstructions[] = {"cwd", "cdq", "cqo"};  
 char* const controlFlowInstructions[] = {""};
+char* const assemblerDirectives[] = {".align", ".bss", ".byte", ".8byte", ".comm", ".data", 
+                                     ".double", ".file", ".float",".globl",".ident",".lcomm", 
+                                     ".long",".quad",".rel",".section",".set",".size",".string",
+                                     ".text",".type",".value",".zero"}; 
 
+char* lastAssemblerDirective = NULL;
 /* 
 return: the first available purpose register
 */
@@ -886,22 +980,6 @@ int getAvailableRegister() {
     return -1; // no available register, use stack
 }
 
-void write_register(char* name) {
-    fwrite((char*)name, strlen((char*)name), 1, ofptr);
-}
-
-void write_number(int intNumber) { 
-    char* number = NULL;
-    intToStr(intNumber, &number);
-    fwrite(number, strlen(number), 1, ofptr);
-}
-
-void write_memory(char* name) { //[name]
-    fwrite("[", 1, 1, ofptr);
-    fwrite(name, strlen(name), 1, ofptr);
-    fwrite("]", 1, 1, ofptr);
-}
-
 /*
 Move
 
@@ -911,60 +989,10 @@ mov <reg>,<mem>
 mov <mem>,<reg>
 mov <reg>,<const>
 mov <mem>,<const>
-
-destName: name of left side reg/mem
-fromName: name of right side reg/mem or empty for const
-flagDest: 0-reg 1-mem 2-data[reg]
-flagFrom: 0-reg 1-mem 2-const 3-dataName[reg]
-dataName: label from .data section
 */
 
-void asm_mov_write(char* destName,char* fromName,int flagDest,int flagFrom, int con) { 
-
-    if((flagDest == 1) && (flagFrom == 1)) {
-        printf("error: memory-to-memory move is not supported in asm_mov!");
-        exit(1);
-    }
-
-    fwrite(dataMovementInstructions[0], strlen(dataMovementInstructions[0]), 1, ofptr);
-
-    if(flagDest == 0) { // register
-        write_register(destName);
-    }
-    else if(flagDest == 1) { // memory
-        write_memory(destName);
-    }
-    else if(flagDest == 2) { // data[reg]
-        char* qwordPtr = "QWORD PTR ";
-        fwrite(qwordPtr, strlen(qwordPtr), 1, ofptr);
-        fwrite(destName, strlen(destName), 1, ofptr);
-        write_memory(generalPurposeRegisters[8]);
-    }
-    else {
-        printf("error: invalid dest flag %d in asm_mov!", flagDest);
-        exit(1);
-    }
-
-    fwrite(", ", 2, 1, ofptr);
-
-    if(flagFrom == 0) { // register
-        write_register(fromName);
-    }
-    else if(flagFrom == 1) { // memory
-        write_memory(fromName);
-    }
-    else if(flagFrom == 2) { // constant value
-        write_number(con);
-        
-    }
-    else if(flagFrom == 3) { // data[reg]
-        fwrite(fromName, strlen(fromName), 1, ofptr);
-        write_memory(generalPurposeRegisters[8]);
-    }
-    else {
-        printf("error: invalid from flag %d in asm_mov! ", flagFrom);
-        exit(1);
-    }
+void asm_mov_write(char* destName,char* fromName) { 
+    fprintf(ofptr, "\n\t%s %s, %s", dataMovementInstructions[0], destName, fromName);
 }
 
 /*
@@ -974,25 +1002,10 @@ Syntax
 push <reg32>
 push <mem>
 push <con32>
-
-name: name of reg,mem or con32
-flag: 0-reg 1-mem 2-con
 */
 
-void asm_push_write(char* name,int con,int flag) {
-    fwrite(dataMovementInstructions[1], strlen(dataMovementInstructions[1]), 1, ofptr);
-
-    if(flag == 0) // reg
-        write_register(name);
-    else if(flag == 1)  // mem
-        write_memory(name);
-    else if(flag == 2) { // con32
-        write_number(con);
-    }
-    else {
-        printf("error: invalid from flag in asm_push!");
-        exit(1);
-    }
+void asm_push_write(char* name) {
+    fprintf(ofptr, "\n\t%s %s", dataMovementInstructions[1], name);
 }
 
 /*
@@ -1001,21 +1014,9 @@ Pop stack
 Syntax
 pop <reg32>
 pop <mem>
-
-name: name of reg or mem
-flag: 0-reg 1-mem
 */
-void asm_pop_write(char* name,int flag) {
-    fwrite(dataMovementInstructions[2], strlen(dataMovementInstructions[2]), 1, ofptr);
-
-    if(flag == 0) 
-        write_register(name);
-    else if(flag == 1) 
-        write_memory((char*)name);
-    else {
-        printf("error: invalid from flag in asm_pop!");
-        exit(1);
-    }
+void asm_pop_write(char* name) {
+    fprintf(ofptr, "\n\t%s %s", dataMovementInstructions[2], name);
 }
 
 /* 
@@ -1024,18 +1025,15 @@ Load effective address
 Syntax
 lea <reg32>,<mem>
 
-name: name of reg or mem
 */
-void asm_lea_write(char* name) {
-    fwrite(dataMovementInstructions[3], strlen(dataMovementInstructions[3]), 1, ofptr);
-
-    write_memory(name);
+void asm_lea_write(char* destName, char* fromName) {
+    fprintf(ofptr, "\n\t%s %s, %s", dataMovementInstructions[3], destName, fromName);
 }
 
 /* Arithmetic and Logic Instructions */
 
 /* 
-Integer Addition or Substraction
+Integer Addition 
 
 Syntax
 add/sub <reg>,<reg>
@@ -1043,54 +1041,23 @@ add/sub <reg>,<mem>
 add/sub <mem>,<reg>
 add/sub <reg>,<con>
 add/sub <mem>,<con>
-
-inst: add-0 sub-1
-destName: name of left side reg/mem
-fromName: name of right side reg/mem or empty for const
-flag: 0-reg 1-mem 2-const
-
 */
-void asm_add_or_sub_write(int inst, char* destName, char* fromName,int con, int flagDest, int flagFrom) {
-    if((flagDest == 1) && (flagFrom == 1)) {
-        printf("error: memory-to-memory is not supported in asm_add_or_sub!");
-        exit(1);
-    }
+void asm_add_write(char* destName, char* fromName) {
+    fprintf(ofptr, "\n\t%s %s, %s",arithmeticAndLogicInstructions[0], destName, fromName);
+}
 
-    if(inst < 0 || inst > 1) {
-        printf("error: invalid inst flag in asm_add_or_sub!");
-        exit(1);
-    }
+/* 
+Integer Substraction
 
-    fwrite(arithmeticAndLogicInstructions[inst], strlen(arithmeticAndLogicInstructions[inst]), 1, ofptr);
-
-    if(flagDest == 0) { // register
-        write_register(destName);
-    }
-    else if(flagDest == 1) { // memory
-        write_memory(destName);
-    }
-    else {
-        printf("error: invalid dest flag in asm_add_or_sub!");
-        exit(1);
-    }
-
-    fwrite(", ", 2, 1, ofptr);
-
-    if(flagFrom == 0) { // register
-        write_register(fromName);
-    }
-    else if(flagFrom == 1) { // memory
-        write_memory(fromName);
-    }
-    else if(flagFrom == 2) { // constant value
-        write_number(con);
-        
-    }
-    else {
-        printf("error: invalid from flag in asm_add_or_sub!");
-        exit(1);
-    }
-
+Syntax
+add/sub <reg>,<reg>
+add/sub <reg>,<mem>
+add/sub <mem>,<reg>
+add/sub <reg>,<con>
+add/sub <mem>,<con>
+*/
+void asm_sub_write(char* destName, char* fromName) {
+    fprintf(ofptr, "\n\t%s %s, %s",arithmeticAndLogicInstructions[1], destName, fromName);
 }
 
 /* 
@@ -1101,41 +1068,11 @@ imul <reg32>,<reg32>
 imul <reg32>,<mem>
 imul <reg32>,<reg32>,<con>
 imul <reg32>,<mem>,<con>
-
-destReg: name of left side reg
-fromName: name of right side reg/mem 
-flag: 0-reg 1-mem 
-con: con for 3rd argument
-isCon: if the 3 operand imul should be used
 */
-void asm_imul_write(char* destReg, char* fromName,int flagDest, int flagFrom, int con, bool isCon) {
-    fwrite(arithmeticAndLogicInstructions[4], strlen(arithmeticAndLogicInstructions[4]), 1, ofptr);
-
-    if(flagDest == 0) { // register
-        write_register(destReg);
-    }
-    else {
-        printf("error: invalid from flag in asm_imul!");
-        exit(1);
-    }
-
-    fwrite(", ", 2, 1, ofptr);
-
-    if(flagFrom == 0) { // register
-        write_register(fromName);
-    }
-    else if(flagFrom == 1) { // memory
-        write_memory(fromName);
-    }
-    else {
-        printf("error: invalid from flag in asm_imul!");
-        exit(1);
-    }
-
-    if(isCon) {
-        fwrite(", ", 2, 1, ofptr);
-        write_number(con);
-    }
+void asm_imul_write(char* destReg, char* fromName, char* con) {
+    if(con) 
+        fprintf(ofptr, "\n\t%s %s, %s, %s", arithmeticAndLogicInstructions[4], destReg, fromName, con);
+    else fprintf(ofptr, "\n\t%s %s, %s", arithmeticAndLogicInstructions[4], destReg, fromName);
 }
 
 /* 
@@ -1144,82 +1081,117 @@ Integer Division
 Syntax
 idiv <reg32>
 idiv <mem>
-
-flag: 0-reg32 1-mem
 */
-void asm_idiv_write(char* name, int flag) {
-
-    // asm_mov_write(generalPurposeRegisters[2], NULL, 0, 2, 0); for positive rax
-    // asm_mov_write(generalPurposeRegisters[2], NULL, 0, 2, -1); for negative rax
+void asm_idiv_write(char* name) {
+    // asm_mov_write(generalPurposeRegisters[2], "0"); for positive rax
+    // asm_mov_write(generalPurposeRegisters[2], "-1"); for negative rax
     // zeroing rdx with negative dividend leads to large positive Floating point exception so just sign extend rdx
-    fwrite(convertInstructions[2], strlen(convertInstructions[2]), 1, ofptr);
-
-    fwrite(arithmeticAndLogicInstructions[5], strlen(arithmeticAndLogicInstructions[5]), 1, ofptr);
-
-    if(flag == 0) { // register
-        write_register(name);
-    }
-    else if(flag == 1) { // memory
-        write_memory(name);
-    }
-    else {
-        printf("error: invalid from flag in asm_idiv!");
-        exit(1);
-    }
-
+    fprintf(ofptr, "\n\t%s", convertInstructions[2]);
+    fprintf(ofptr, "\n\t%s %s", arithmeticAndLogicInstructions[5], name);
 }
 
-void asm_comm_Write(char* name, char* size) {
-    char* comm = "\n\t.comm ";
-    fwrite(comm, strlen(comm), 1, ofptr);
-    fwrite(name, strlen(name), 1, ofptr);
-    fwrite(size, strlen(size), 1, ofptr);
+void asm_comm_Write(char* name, char* size, char* alignment) {
+    fprintf(ofptr, "\n\t%s %s,%s,%s", assemblerDirectives[4], name, size, alignment);
 }
 
-int parseArithmeticTree(AST* ast) {
+/* Helper functions for code generation */
+void asm_functionPreamble(char* functionName) {
+    fprintf(ofptr, "\n\t.globl\t%s\r\n\t.type\t%s, @function\r\n%s:", functionName, functionName, functionName);
+    fprintf(ofptr,"%s:\n\tpush\trbp\r\n\tmov\trbp, rsp", functionName); 
+}
+
+void asm_allocateStackSpace(int offset) {
+    // allocate space on the stack if needed
+    char* spaceNeeded = NULL;
+    
+    intToStr(offset, &spaceNeeded);
+    asm_sub_write(specialPurposeRegisters[0], spaceNeeded);
+}
+
+void asm_cleanStack(int bytes) {
+    // add rsp, bytes
+    char* result;
+    intToStr(bytes, &result);
+    asm_mov_write(specialPurposeRegisters[0], result);
+}
+
+void asm_functionPostamble() {
+    fprintf(ofptr, "\r\n\tmov\trsp, rbp\r\n\tpop\trbp\r\n\tret");
+}
+
+/* Helper functions to parse different AST's */
+
+int parseArithmeticTree(AST* ast, int owner) {
     if(ast->left == NULL) {
         int op = ast->op;
         if(op == op_INT) {
             int reg = getAvailableRegister();
-            asm_mov_write(addedPurposeRegisters[reg],NULL,0, 2, ast->value);
+            char* destOperand = addedPurposeRegisters[reg];
+            char* srcOperand = NULL;
+            intToStr(ast->value, &srcOperand);
+            asm_mov_write(destOperand ,srcOperand);
             return reg;
         }
         else if(op == op_IDENTIFIER) {
-            //return getcurrStringifierValue(); not yet implemented
+            // Program can't have arithmetic statements with identifiers as rvalues
+            if(owner == 0) {
+                printf("Program can't have arithmetic statements with identifiers as rvalues!");
+                exit(1);
+            }
+
             int reg = getAvailableRegister();
-            ENTRY* e = lookupSymbol(ast->value);
-            asm_mov_write(addedPurposeRegisters[reg],e->name,0, 3, ast->value);
+            // get the owner's table
+            ENTRY* e = getEntryFromOwner(owner, ast->value);
+            char* destOperand = addedPurposeRegisters[reg];
+            char srcOperand[32];
+            // check to see if the variable is either global,local or local argument
+            if(e->scope == 0) { // global variable
+                sprintf(srcOperand, "%s[%s]", e->name, specialPurposeRegisters[2]);
+            }
+            else if(e->scope == 1) { // local
+                // determine the offset to sub from rbp
+                char *offset = NULL;
+                intToStr(getLocalOffset(lookupSymbol(SymbolTable, owner)->localSymbolTable,e->index), &offset);
+                sprintf(srcOperand, "-%s[%s]", offset, specialPurposeRegisters[1]);
+            }
+            else { //argument
+                // determine the offset to add from rbp
+                char* offset = NULL;
+                intToStr(getArgOffset(lookupSymbol(SymbolTable, owner)->localSymbolTable,e->index), &offset);
+                sprintf(srcOperand, "%s[%s]", offset, specialPurposeRegisters[1]);
+            }
+            asm_mov_write(destOperand,srcOperand);
             return reg;
         }
     }
 
-    int leftReg = parseArithmeticTree(ast->left);
-    int rightReg = parseArithmeticTree(ast->right);
+    int leftReg = parseArithmeticTree(ast->left, owner);
+    int rightReg = parseArithmeticTree(ast->right, owner);
 
-    if(ast->op == op_MOD) {
+    if(ast->op == op_MOD) { // not yet implemented
         return leftReg;
     }
     else if(ast->op == op_MULT) {
-        asm_imul_write(addedPurposeRegisters[leftReg], addedPurposeRegisters[rightReg], 0, 0, 0, false);
+        asm_imul_write(addedPurposeRegisters[leftReg], addedPurposeRegisters[rightReg], NULL);
         availableAddedPurposeRegisters[rightReg] = 0;
         return leftReg;
     }
     else if(ast->op == op_DIV) {
         // 64 bit integer RDX:RAX, RDX has the most significant four bytes and RAX has the least significant four bytes
-        asm_mov_write(generalPurposeRegisters[0],addedPurposeRegisters[leftReg],0, 0, 0); // copy dividend argument into RAX
-        asm_idiv_write(addedPurposeRegisters[rightReg], 0); // divide by right reg divisor argument
-        asm_mov_write(addedPurposeRegisters[leftReg],generalPurposeRegisters[0],0, 0, 0); // move the result from RAX to left reg
+        asm_mov_write(generalPurposeRegisters[0],addedPurposeRegisters[leftReg]); // copy dividend argument into RAX
+        asm_idiv_write(addedPurposeRegisters[rightReg]); // divide by right reg divisor argument
+        asm_mov_write(addedPurposeRegisters[leftReg],generalPurposeRegisters[0]); // move the result from RAX to left reg
         availableGeneralPurposeRegisters[0] = 0;
         availableAddedPurposeRegisters[rightReg] = 0;
         return leftReg;
     }
     else if(ast->op == op_PLUS) {
-        asm_add_or_sub_write(0, addedPurposeRegisters[leftReg], addedPurposeRegisters[rightReg], 0, 0, 0);
+        asm_add_write(addedPurposeRegisters[leftReg], addedPurposeRegisters[rightReg]);
         availableAddedPurposeRegisters[rightReg] = 0;
         return leftReg;
     }
     else if(ast->op == op_MINUS) {
-        asm_add_or_sub_write(1, addedPurposeRegisters[leftReg], addedPurposeRegisters[rightReg], 0, 0, 0);
+        asm_sub_write(addedPurposeRegisters[leftReg], addedPurposeRegisters[rightReg]);
         availableAddedPurposeRegisters[rightReg] = 0;
         return leftReg;
     }
@@ -1236,8 +1208,8 @@ int optimized_parseArithmeticTree(AST* ast) {
             case op_INT:
                 return ast->value;
             case op_IDENTIFIER:
-                //return getcurrStringifierValue(); not yet implemented
-                break;
+                printf("identifiers aren't allowed in constant expressions!");
+                exit(1);
         }
     }
 
@@ -1265,46 +1237,53 @@ int optimized_parseArithmeticTree(AST* ast) {
     }
 }
 
-void writePreamble() {
-    destFileName = (char*) malloc(strlen(sourceFileName));
-    strcpy(destFileName, sourceFileName);
-    destFileName[strlen(sourceFileName) - 1] = 's';
-
-    ofptr = fopen(destFileName, "wt");
-
-    if (!ofptr) {
-        printf("failed to create (%s) dest file", destFileName);
-        exit(1);
-    }
-
-    char* fileNamePreamble = "\t.file\t\"";
-    fwrite(fileNamePreamble, sizeof(fileNamePreamble), 1, ofptr);
-    fwrite(sourceFileName, strlen(sourceFileName), 1 , ofptr);
-    char* no_prefix_intel = "\"\r\n\t.intel_syntax noprefix"; // forces the GNU Assembler to not require % for registers
-    fwrite(no_prefix_intel, strlen(no_prefix_intel), 1, ofptr);
-    char* preamble = "\r\n\t.text\r\n\t.globl\tmain\r\n\t.type\tmain, @function\r\nmain:\r\n\tpush\trbp\r\n\tmov\trbp, rsp";
-    fwrite(preamble, strlen(preamble), 1 , ofptr);
-}
-
 void parseDeclarationAst(AST* ast, int owner) {
-    ENTRY* e = lookupSymbol(ast->value);
+    ENTRY* e = getEntryFromOwner(owner, ast->value);
     int scope = e->scope;
     int type = e->type;
-    int typeSpecifier = e->type_specifier;
-    int owner = e->owner;
+    //int typeSpecifier = e->type_specifier; commented for the moment to remove unused compiler error
 
     if(scope == 0) { // global declaration
         if(type == 0) { // variable
             // check if its initialized or not
             if(ast->left) { // initialized add it on .data segment
+                int rValue = optimized_parseArithmeticTree(ast->left);
+                char* strValue = NULL;
+                intToStr(rValue, &strValue);
+                
+                fprintf(ofptr, "\t.globl\t%s", e->name);
+
+                if(strcmp(lastAssemblerDirective, assemblerDirectives[5]) != 0) {
+                    fprintf(ofptr, "\n\t%s", assemblerDirectives[5]);
+                    lastAssemblerDirective = assemblerDirectives[5];
+                }
+
+                // determine offset and allign based on type specifier - not yet implemented, assume int
+                fprintf(ofptr, "\t.align 8\r\n\t.type\t%s, @object\r\n\t.size\t%s, 8\r\n%s:\r\n\t.quad\t%s", e->name, e->name, e->name, strValue);
 
             } 
             else { // unnitialized add it on .bss segment
-
+                // first check the type specifier for the size - not yet implemented, assume int
+                asm_comm_Write(e->name, "8", "8");
             }
         }
         else if(type == 1) { // function
+            if(strcmp(lastAssemblerDirective, assemblerDirectives[19]) != 0) {
+                    fprintf(ofptr, "\n\t%s", assemblerDirectives[19]);
+                    lastAssemblerDirective = assemblerDirectives[19];
+            }
+            asm_functionPreamble(e->name);
+            // get the total size in bytes of local variables
+            int offset = getLocalStackSize(e->localSymbolTable, e->localSymbolTableIndex);
+            if(offset > 0)
+                asm_allocateStackSpace(offset);
 
+            // parse each statement inside
+            AST* currStatement = ast->mid;
+            parseStatements(currStatement, e->index);
+
+            if(offset > 0)
+                asm_cleanStack(offset);
         }
         else {
             printf("error: invalid global declaration type! expected variable or function");
@@ -1313,7 +1292,20 @@ void parseDeclarationAst(AST* ast, int owner) {
     }
     else if(scope == 1) { // local declaration
         if(type == 0) { // variable
-
+            if(ast->left) { // initialized
+                int resultReg = parseArithmeticTree(ast->left, owner);
+                printf("local: register that has the expr val:%s\n", addedPurposeRegisters[resultReg]);
+                char destOperand[32];
+                char* srcOperand = addedPurposeRegisters[resultReg];;
+                char *offset = NULL;
+                intToStr(getLocalOffset(lookupSymbol(SymbolTable, owner)->localSymbolTable,e->index), &offset);
+                sprintf(destOperand, "-%s[%s]", offset, specialPurposeRegisters[1]);
+                asm_mov_write(destOperand,srcOperand);
+                availableAddedPurposeRegisters[resultReg] = 0;
+            }
+            else { // unitialized, nothing to be done
+                return;
+            }
         }
         else if(type == 1) { // function
             printf("error: functions cant be declared locally!");
@@ -1332,83 +1324,88 @@ void parseDeclarationAst(AST* ast, int owner) {
         printf("error: invalid declaration scope");
         exit(1);
     }
-
-    /*
-    char* varSize;
-    switch(e->type_specifier) {
-        case 0: // int
-            varSize = ",4,4";
-            break;
-        case 1: // double
-            varSize = ",8,8";
-            break;
-    }
-
-    asm_comm_Write(e->name, varSize);
-
-    if(ast->left) {
-        //printf("expr value: %d\n", optimized_parseArithmeticTree(ast->left));
-        int resultReg = parseArithmeticTree(ast->left);
-        printf("register that has the expr val:%s\n", addedPurposeRegisters[resultReg]);
-        asm_mov_write(e->name,addedPurposeRegisters[resultReg],2, 0, 0);
-        availableAddedPurposeRegisters[resultReg] = 0;
-    }
-    */
 }
 
 void parseAssignAst(AST* ast, int owner) {
-    ENTRY* e = NULL;
-    if(owner == 0) {
-        e = lookupSymbol(SymbolTable,ast->value);
-    }
-    else { // owner isn't program, first get the function's ENTRY and then get the ast's ENTRY
-        e = lookupSymbol(SymbolTable,owner);
-        ENTRY** ownersTable = e->localSymbolTable;
-        int ownersIndex = e->localSymbolTableIndex;
-        e = lookupSymbol(SymbolTable,ast->value);
-    }
+    ENTRY* e = getEntryFromOwner(owner, ast->value);
+    char destOperand[32];
+    char* srcOperand = NULL;
 
-    int resultReg = parseArithmeticTree(ast->left);
-    printf("register that has the expr val:%s\n", addedPurposeRegisters[resultReg]);
     // check whether the symbol is global or local 
+    if(e->scope == 0) { // global
+        int res = optimized_parseArithmeticTree(ast->left);
 
-    //asm_mov_write(e->name,addedPurposeRegisters[resultReg],2, 0, 0);
-    availableAddedPurposeRegisters[resultReg] = 0;
+        intToStr(res, &srcOperand);
+        sprintf(destOperand, "%s[%s]", e->name, specialPurposeRegisters[2]);
+        asm_mov_write(destOperand, srcOperand);
+    } 
+    else if(e->scope == 1){ // local
+        int resultReg = parseArithmeticTree(ast->left, owner);
+        printf("register that has the expr val:%s\n", addedPurposeRegisters[resultReg]);
+        srcOperand = addedPurposeRegisters[resultReg];
 
+        char *offset = NULL;
+        intToStr(getLocalOffset(lookupSymbol(SymbolTable, owner)->localSymbolTable,e->index), &offset);
+        sprintf(destOperand, "-%s[%s]", offset, specialPurposeRegisters[1]);
+        asm_mov_write(destOperand,srcOperand);
+        availableAddedPurposeRegisters[resultReg] = 0;
+
+    }
+    else if(e->scope == 2) { // parameter
+        int resultReg = parseArithmeticTree(ast->left, owner);
+        printf("register that has the expr val:%s\n", addedPurposeRegisters[resultReg]);
+        srcOperand = addedPurposeRegisters[resultReg];
+
+        char* offset = NULL;
+        intToStr(getArgOffset(lookupSymbol(SymbolTable, owner)->localSymbolTable,e->index), &offset);
+        sprintf(destOperand, "%s[%s]", offset, specialPurposeRegisters[1]);
+        asm_mov_write(destOperand,srcOperand);
+        availableAddedPurposeRegisters[resultReg] = 0;
+    }
+    else {
+        printf("error: invalid lvalue scope!");
+        error(1);
+    }
 }
 
-void parseProgramAst(AST* ast) {
-    AST* currStatementAst = ast->left;
-    // parse each statement
-    while(currStatementAst != NULL) {
+void parseStatements(AST* ast, int owner) {
+    while(ast != NULL) {
         // check ast op code 
-        switch(currStatementAst->op) {
+        switch(ast->op) {
             case op_DECLARE:
-                parseDeclarationAst(currStatementAst, 0);
+                parseDeclarationAst(ast, owner);
                 break;
             case OP_ASSIGN:
-                parseAssignAst(currStatementAst, 0);
+                parseAssignAst(ast, owner);
                 break;
             default:
                 printf("error: invalid statement AST! expected %s or %s", "op_DECLARE", "op_ASSIGN");
                 exit(1);
         }
-        currStatementAst = currStatementAst->right;
+        ast = ast->right;
     }
 }
 
-void writeExpression(AST* ast) {
-    //printf("expr value: %d\n", optimized_parseArithmeticTree(ast->left));
-    //int resultReg = parseArithmeticTree(ast->left);
-    //printf("register that has the expr val:%s\n", addedPurposeRegisters[resultReg]);
-
-    //asm_mov_write(generalPurposeRegisters[0],addedPurposeRegisters[resultReg],0, 0, 0);
-    //addedPurposeRegisters[resultReg] = 0;
+void parseProgramAst(AST* ast) {
+    AST* currStatementAst = ast->left;
+    // parse each statement
+    parseStatements(currStatementAst, 0);
 }
 
-void writePostamble() {
-    char* postamble = "\r\n\tpop\trbp\r\n\tret\n";
-    fwrite(postamble, strlen(postamble), 1, ofptr);
+void writePreamble() {
+    destFileName = (char*) malloc(strlen(sourceFileName));
+    strcpy(destFileName, sourceFileName);
+    destFileName[strlen(sourceFileName) - 1] = 's';
+
+    ofptr = fopen(destFileName, "wt");
+
+    if (!ofptr) {
+        printf("failed to create (%s) dest file", destFileName);
+        exit(1);
+    }
+    // 'intel_syntax noprefix' forces the GNU Assembler to not require % for registers
+    fprintf(ofptr, "\t.file\t\"%s\"\r\n\t.intel_syntax noprefix\t.text", sourceFileName);
+    lastAssemblerDirective = assemblerDirectives[19];
 }
 
 /** 
@@ -1442,10 +1439,9 @@ int main(int argc, char **argv) {
         return -1;
     }
 
-    //writePreamble();
-    //parseProgramAst(parser());
+    writePreamble();
+    parseProgramAst(parser());
     parser();
-    //writePostamble();
 
     cleanUp();
 }
