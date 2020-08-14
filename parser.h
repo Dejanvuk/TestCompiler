@@ -31,6 +31,8 @@ AST* assignmentStatement(int);
 
 AST* selectionStatement();
 
+AST* returnStatement(int);
+
 AST* statement(int);
 
 AST* program();

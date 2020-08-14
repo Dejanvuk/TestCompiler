@@ -190,7 +190,8 @@ enum { // terminal symbols
   TOK_ELSE_IF, // 'else if'
   TOK_ELSE, // 'else
   TOK_SMCL, // ';'
-  TOK_COMMA // ,
+  TOK_COMMA, // ,
+  TOK_RETURN // 'return'
 };
 
 int precedenceTable[] = { 
@@ -212,6 +213,7 @@ enum {
     OP_ASSIGN,
     op_IDENTIFIER,
     op_INT,
+    op_RETURN
 };
 
 int getTypeSpecifier(char* type) {
@@ -505,7 +507,9 @@ AST* makeArithmeticExpressionAST (int op,AST* left, AST* right) {
 };
 
 /*
-left -> expression
+for variables: left -> expression
+for functions: left -> arguments
+                mid -> statements
 */
 AST* makeDeclareAST (int op,int symbolIndex, AST* left, AST* mid, AST* right) {
   return makeAST(op, symbolIndex, left, mid, right);
@@ -513,6 +517,14 @@ AST* makeDeclareAST (int op,int symbolIndex, AST* left, AST* mid, AST* right) {
 
 AST* makeAssignmentAST (int op,int symbolIndex, AST* left) {
   return makeAST(op, symbolIndex, left, NULL, NULL);
+};
+
+/* 
+value: either a constant or a symbol index; in case of name collision local symbol has precedence over global symbol
+left -> expressionAst
+*/
+AST* makeReturnAST(AST* left) {
+  return makeAST(op_RETURN,0, left, NULL, NULL);
 };
 
 /* 
@@ -572,6 +584,9 @@ void getNextToken() {
         // check if it's a reserved keyword first
         if(!strcmp(currString, "int")) {
             currToken.token = TOK_TYPE_SPECIFIER;
+        }
+        else if(!strcmp(currString, "return")) {
+            currToken.token = TOK_RETURN;
         }
         else { //it's an identifier
             currToken.token = TOK_IDENTIFIER;
@@ -900,6 +915,36 @@ AST* selectionStatement() {
     return NULL;
 }
 
+AST* returnStatement(int owner) {
+    if(owner == 0) { // program return is in main
+        printf("error: expected a declaration but got return!");
+        exit(1);
+    }
+
+    getNextToken(); // either a number or a identifier; null/undefined will be implemented later
+
+    ENTRY* functionEntry = lookupSymbol(SymbolTable, owner);
+
+    AST* expr = expressionStatement(4, owner);
+
+    // the return type of the function must match the functions type specifier; currently all functions return int
+    if(expr->op == op_INT || expr->op == op_MOD || expr->op == op_DIV 
+        || expr->op == op_MULT || expr->op == op_PLUS || expr->op == op_MINUS) { // return a number constant
+        if(functionEntry->type_specifier != 0) { 
+            printf("error: incompatible return type specifier!"); // later we will check the return for overflow, imcompatible casts, pointer from literal etc
+            exit(1);
+        }
+    }
+    else if(expr->op == op_IDENTIFIER) { // return a variable
+        if(functionEntry->type_specifier != 0) { 
+            printf("error: incompatible return type specifier!"); // later we will check the return for overflow, imcompatible casts, pointer from literal etc
+            exit(1);
+        }
+    }
+
+    return makeReturnAST(expr);
+}
+
 
 AST* statement(int owner) {
     AST* ast = NULL;
@@ -915,6 +960,9 @@ AST* statement(int owner) {
             break;
         case TOK_IDENTIFIER: // either an assignment or function call 
             ast = assignmentStatement(owner);
+            break;
+        case TOK_RETURN: // return statement 
+            ast = returnStatement(owner);
             break;
         default:
             printf("error: invalid token; expected %s or %s or %c or %s", "int", "<currStringifier-name>", '{', "if");
@@ -1124,6 +1172,7 @@ void asm_cleanStack(int bytes) {
     char* result;
     intToStr(bytes, &result);
     asm_mov_write(specialPurposeRegisters[0], result);
+    fprintf(ofptr, "                               # clean the stack");
 }
 
 void asm_functionPostamble() {
@@ -1382,6 +1431,19 @@ void parseAssignAst(AST* ast, int owner) {
     }
 }
 
+void parseReturnAst(AST* ast,int owner) {
+    char* destOperand = generalPurposeRegisters[0]; // rax
+    char* srcOperand = NULL;
+
+    int resultReg = parseArithmeticTree(ast->left, owner);
+    printf("\nreturn: register that has the expr val:%s", addedPurposeRegisters[resultReg]);
+    srcOperand = addedPurposeRegisters[resultReg];
+    asm_mov_write(destOperand,srcOperand);
+    fprintf(ofptr, "                               # place the return into rax");
+    availableGeneralPurposeRegisters[0] = 0; // make rax available again
+    availableAddedPurposeRegisters[resultReg] = 0;
+}
+
 void parseStatements(AST* ast, int owner) {
     while(ast != NULL) {
         // check ast op code 
@@ -1391,6 +1453,9 @@ void parseStatements(AST* ast, int owner) {
                 break;
             case OP_ASSIGN:
                 parseAssignAst(ast, owner);
+                break;
+            case op_RETURN:
+                parseReturnAst(ast, owner);
                 break;
             default:
                 printf("error: invalid statement AST! expected %s or %s", "op_DECLARE", "op_ASSIGN");
@@ -1418,7 +1483,7 @@ void writePreamble() {
         exit(1);
     }
     // 'intel_syntax noprefix' forces the GNU Assembler to not require % for registers
-    fprintf(ofptr, "\t.file\t\"%s\"\r\n\t.intel_syntax noprefix\t.text", sourceFileName);
+    fprintf(ofptr, "\t.file\t\"%s\"\r\n\t.intel_syntax noprefix\n\t.text", sourceFileName);
     lastAssemblerDirective = assemblerDirectives[19];
 }
 
