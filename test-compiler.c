@@ -142,6 +142,25 @@ TOK_ASSIGN: '='
 
 */
 
+char* const specialPurposeRegisters[]         = {"rsp", "rbp", "rip", "rflags"};
+char* const generalPurposeRegisters[]         = {"rax", "rcx", "rdx", "rbx", "rsi", "rdi"};
+char* const addedPurposeRegisters[]           = {"r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"};
+
+int availableGeneralPurposeRegisters[] = {0,0,0,0,0,0,0,0};
+int availableAddedPurposeRegisters[] = {0,0,0,0,0,0,0,0};
+
+char* const dataMovementInstructions[]        = {"mov", "push", "pov", "lea"};
+char* const arithmeticAndLogicInstructions[]  = {"add", "sub", "inc", "dec", "imul", "idiv",
+                                                     "and", "or", "xor", "not", "neg","shl", "shr"};
+char* const convertInstructions[] = {"cwd", "cdq", "cqo"};  
+char* const controlFlowInstructions[] = {""};
+char* const assemblerDirectives[] = {".align", ".bss", ".byte", ".8byte", ".comm", ".data", 
+                                     ".double", ".file", ".float",".globl",".ident",".lcomm", 
+                                     ".long",".quad",".rel",".section",".set",".size",".string",
+                                     ".text",".type",".value",".zero"}; 
+
+char* lastAssemblerDirective = NULL;
+
 typedef struct token {
   int token;
   int value;
@@ -437,11 +456,11 @@ int getLocalStackSize(ENTRY** table, int tableSize) {
 /* return the offset of the function argument 
 index starts from 1
 */
-int getArgOffset(ENTRY** table, int index) {
+int getArgOffset(ENTRY** table, int index, int start) {
     int offset = 0; 
-    for(int i = 0; i <= index; i++) {
+    for(int i = start; i <= index; i++) {
         ENTRY* e = lookupSymbol(table, i);
-        if(e->type != 2) {
+        if(e->scope != 2) {
             printf("error: invalid argument index");
             exit(1);
         }
@@ -450,6 +469,30 @@ int getArgOffset(ENTRY** table, int index) {
     }
 
     return offset;
+}
+
+/* */
+void getRegisterParameter(int paramIndex, char** srcOperand) {
+    switch(paramIndex) {
+        case 0: // rdi
+            *srcOperand = generalPurposeRegisters[5];
+            break; 
+        case 1: // rsi
+            *srcOperand = generalPurposeRegisters[4];
+            break;
+        case 2: // rdx
+            *srcOperand = generalPurposeRegisters[2];
+            break;
+        case 3: // rcx
+            *srcOperand = generalPurposeRegisters[1];
+            break;
+        case 4: // r8
+            *srcOperand = addedPurposeRegisters[0];
+            break;
+        case 5: // r9
+            *srcOperand = addedPurposeRegisters[1];
+            break;
+    }
 }
 
 /* return the offset of the local variable
@@ -1007,24 +1050,6 @@ AST* parser() {
  * 
  */
 
-char* const specialPurposeRegisters[]         = {"rsp", "rbp", "rip", "rflags"};
-char* const generalPurposeRegisters[]         = {"rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi"};
-char* const addedPurposeRegisters[]           = {"r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"};
-
-int availableGeneralPurposeRegisters[] = {0,0,0,0,0,0,0,0};
-int availableAddedPurposeRegisters[] = {0,0,0,0,0,0,0,0};
-
-char* const dataMovementInstructions[]        = {"mov", "push", "pov", "lea"};
-char* const arithmeticAndLogicInstructions[]  = {"add", "sub", "inc", "dec", "imul", "idiv",
-                                                     "and", "or", "xor", "not", "neg","shl", "shr"};
-char* const convertInstructions[] = {"cwd", "cdq", "cqo"};  
-char* const controlFlowInstructions[] = {""};
-char* const assemblerDirectives[] = {".align", ".bss", ".byte", ".8byte", ".comm", ".data", 
-                                     ".double", ".file", ".float",".globl",".ident",".lcomm", 
-                                     ".long",".quad",".rel",".section",".set",".size",".string",
-                                     ".text",".type",".value",".zero"}; 
-
-char* lastAssemblerDirective = NULL;
 /* 
 return: the first available purpose register
 */
@@ -1156,7 +1181,7 @@ void asm_comm_Write(char* name, char* size, char* alignment) {
 /* Helper functions for code generation */
 void asm_functionPreamble(char* functionName) {
     fprintf(ofptr, "\n\t.globl\t%s\r\n\t.type\t%s, @function\r\n%s:", functionName, functionName, functionName);
-    fprintf(ofptr,"%s:\n\tpush\trbp\r\n\tmov\trbp, rsp", functionName); 
+    fprintf(ofptr,"\n\tpush\trbp\r\n\tmov\trbp, rsp"); 
 }
 
 void asm_allocateStackSpace(int offset) {
@@ -1203,7 +1228,7 @@ int parseArithmeticTree(AST* ast, int owner) {
             // get the owner's table
             ENTRY* e = getEntryFromOwner(owner, ast->value);
             char* destOperand = addedPurposeRegisters[reg];
-            char srcOperand[32];
+            char* srcOperand = malloc(32 * sizeof(char));
             // check to see if the variable is either global,local or local argument
             if(e->scope == 0) { // global variable
                 sprintf(srcOperand, "%s[%s]", e->name, specialPurposeRegisters[2]);
@@ -1215,10 +1240,17 @@ int parseArithmeticTree(AST* ast, int owner) {
                 sprintf(srcOperand, "-%s[%s]", offset, specialPurposeRegisters[1]);
             }
             else { //argument
-                // determine the offset to add from rbp
-                char* offset = NULL;
-                intToStr(getArgOffset(lookupSymbol(SymbolTable, owner)->localSymbolTable,e->index), &offset);
-                sprintf(srcOperand, "%s[%s]", offset, specialPurposeRegisters[1]);
+                // if more than 6 arguments check the stack for the rest 
+                if(e->index > 5) {
+                    // determine the offset to add from rbp 
+                    char* offset = NULL;
+                    intToStr(getArgOffset(lookupSymbol(SymbolTable, owner)->localSymbolTable,e->index, 6), &offset);
+                    sprintf(srcOperand, "%s[%s]", offset, specialPurposeRegisters[1]); 
+                }
+                else {
+                    // determine the register the parameter value was stored into
+                    getRegisterParameter(e->index,&srcOperand);
+                }
             }
             asm_mov_write(destOperand,srcOperand);
             return reg;
@@ -1415,15 +1447,25 @@ void parseAssignAst(AST* ast, int owner) {
 
     }
     else if(e->scope == 2) { // parameter
+        
         int resultReg = parseArithmeticTree(ast->left, owner);
         printf("\nassignment: register that has the expr val:%s", addedPurposeRegisters[resultReg]);
         srcOperand = addedPurposeRegisters[resultReg];
 
-        char* offset = NULL;
-        intToStr(getArgOffset(lookupSymbol(SymbolTable, owner)->localSymbolTable,e->index), &offset);
-        sprintf(destOperand, "%s[%s]", offset, specialPurposeRegisters[1]);
+        // if more than 6 arguments check the stack for the rest
+        if(e->index > 5) {
+            // determine the offset to add from rbp 
+            char* offset = NULL;
+            intToStr(getArgOffset(lookupSymbol(SymbolTable, owner)->localSymbolTable,e->index, 6), &offset);
+            sprintf(destOperand, "%s[%s]", offset, specialPurposeRegisters[1]);
+        }
+        else {
+            // determine the register the parameter value was stored into
+            getRegisterParameter(e->index, &srcOperand);
+        }
         asm_mov_write(destOperand,srcOperand);
         availableAddedPurposeRegisters[resultReg] = 0;
+        
     }
     else {
         printf("\nerror: invalid lvalue scope!");
