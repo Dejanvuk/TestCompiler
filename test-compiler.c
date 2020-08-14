@@ -1284,6 +1284,7 @@ void parseDeclarationAst(AST* ast, int owner) {
 
             if(offset > 0)
                 asm_cleanStack(offset);
+            asm_functionPostamble();
         }
         else {
             printf("error: invalid global declaration type! expected variable or function");
