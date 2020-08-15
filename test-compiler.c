@@ -504,7 +504,7 @@ index starts from 1
 */
 int getArgOffset(ENTRY **table, int index, int start)
 {
-    int offset = 0;
+    int offset = 8;
     for (int i = start; i <= index; i++)
     {
         ENTRY *e = lookupSymbol(table, i);
@@ -1407,14 +1407,16 @@ void asm_allocateStackSpace(int offset)
     asm_sub_write(specialPurposeRegisters[0], spaceNeeded);
 }
 
+/*
 void asm_cleanStack(int bytes)
 {
     // add rsp, bytes
     char *result;
     intToStr(bytes, &result);
-    asm_mov_write(specialPurposeRegisters[0], result);
+    asm_add_write(specialPurposeRegisters[0], result);
     fprintf(ofptr, "                               # clean the stack");
 }
+*/
 
 void asm_functionPostamble()
 {
@@ -1607,7 +1609,7 @@ void parseDeclarationAst(AST *ast, int owner)
                 char *strValue = NULL;
                 intToStr(rValue, &strValue);
 
-                fprintf(ofptr, "\t.globl\t%s", e->name);
+                fprintf(ofptr, "\n\t.globl\t%s", e->name);
 
                 if (strcmp(lastAssemblerDirective, assemblerDirectives[5]) != 0)
                 {
@@ -1616,7 +1618,7 @@ void parseDeclarationAst(AST *ast, int owner)
                 }
 
                 // determine offset and allign based on type specifier - not yet implemented, assume int
-                fprintf(ofptr, "\t.align 8\r\n\t.type\t%s, @object\r\n\t.size\t%s, 8\r\n%s:\r\n\t.quad\t%s", e->name, e->name, e->name, strValue);
+                fprintf(ofptr, "\n\t.align 8\r\n\t.type\t%s, @object\r\n\t.size\t%s, 8\r\n%s:\r\n\t.quad\t%s", e->name, e->name, e->name, strValue);
             }
             else
             { // unnitialized add it on .bss segment
@@ -1651,8 +1653,6 @@ void parseDeclarationAst(AST *ast, int owner)
             AST *currStatement = ast->mid;
             parseStatements(currStatement, e->index);
 
-            if (offset > 0)
-                asm_cleanStack(offset);
             asm_functionPostamble();
 
             // unrestrict r* r9 if they were used to pass arguments

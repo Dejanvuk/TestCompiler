@@ -1,7 +1,9 @@
 	.file	"test.c"
 	.intel_syntax noprefix
-	.text	.globl	s
-	.data	.align 8
+	.text
+	.globl	s
+	.data
+	.align 8
 	.type	s, @object
 	.size	s, 8
 s:
@@ -12,7 +14,7 @@ s:
 sev:
 	push	rbp
 	mov	rbp, rsp
-	sub rsp, 8
+	sub rsp, 16
 	mov r10, rdi
 	mov r11, rsi
 	add r10, r11
@@ -24,14 +26,15 @@ sev:
 	add r10, r11
 	mov r11, r9
 	add r10, r11
-	mov r11, 8[rbp]
-	add r10, r11
 	mov r11, 16[rbp]
 	add r10, r11
+	mov r11, 24[rbp]
+	add r10, r11
 	mov -8[rbp], r10
+	mov r10, 928
+	mov -16[rbp], r10
 	mov r10, -8[rbp]
 	mov rax, r10                               # place the return into rax
-	mov rsp, 8                               # clean the stack
 	mov	rsp, rbp
 	pop	rbp
 	ret
@@ -40,8 +43,13 @@ sev:
 main:
 	push	rbp
 	mov	rbp, rsp
-	sub rsp, 8
-	push 8
+	sub rsp, 16
+	mov r8, 44
+	mov r9, 2
+	imul r8, r9
+	mov -8[rbp], r8
+	mov r9, -8[rbp]
+	push r9
 	push 7
 	mov r9, 6
 	mov r8, 5
@@ -51,10 +59,9 @@ main:
 	mov rdi, 1
 	call	sev                               # called function "sev"
 	mov r8, rax
-	mov -8[rbp], r8
-	mov r8, -8[rbp]
+	mov -16[rbp], r8
+	mov r8, -16[rbp]
 	mov rax, r8                               # place the return into rax
-	mov rsp, 8                               # clean the stack
 	mov	rsp, rbp
 	pop	rbp
 	ret
