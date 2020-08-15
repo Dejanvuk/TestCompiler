@@ -33,6 +33,10 @@ AST* selectionStatement();
 
 AST* returnStatement(int);
 
+AST* functionCall(int);
+
+AST* assignmentOrFunctionCall(int);
+
 AST* statement(int);
 
 AST* program();
