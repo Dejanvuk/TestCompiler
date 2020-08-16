@@ -12,7 +12,8 @@ int foo(int first) {
 }
 
 int main(int argc, int argv) {
-    int firsta = 3 * 2;
+    int firsta = s * 2;
+    int s = 4;
     int d = sev(s,2,3,4,5,6,7,firsta);
     int g = foo(d);
     return g;

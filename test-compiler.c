@@ -35,6 +35,7 @@ bool isAlphanumeric(int currChar)
 }
 
 char *sourceFileName;
+int lineNumber = 1;
 char *destFileName;
 char *src;   // pointer to source code string;
 FILE *fptr;  // pointer to source code file
@@ -176,7 +177,7 @@ Token currToken = {0, 0};
 
 void error(int token)
 {
-    printf("error: expected %d token ", token);
+    printf("error on line %d: expected %d token ", lineNumber, token);
     exit(1);
 }
 
@@ -266,7 +267,7 @@ int getTypeSpecifierSize(int type)
     case 1:
         return 16;
     default:
-        printf("error: undefined type specifier");
+        printf("error on line %d: undefined type specifier", lineNumber);
         exit(1);
     }
 }
@@ -280,7 +281,7 @@ char *typeSpecifierToStr(int typeSpecifier)
     case 1:
         return "double";
     default:
-        printf("error: undefined type specifier");
+        printf("error on line %d: undefined type specifier", lineNumber);
         exit(1);
     }
 }
@@ -333,7 +334,7 @@ int addSymbolToTheOwnersTable(int owner, char *identifierName, char *typeSpecifi
         // only add the symbol if it wasnt declared already
         if (getSymbolIndex(SymbolTable, symbolTableIndex, identifierName) != -1)
         {
-            printf("error: duplicate global symbol %s ", identifierName);
+            printf("error on line %d: duplicate global symbol %s ", lineNumber, identifierName);
             exit(1);
         }
 
@@ -361,7 +362,7 @@ int addSymbolToTheOwnersTable(int owner, char *identifierName, char *typeSpecifi
             }
             else
             { // else it's duplicated local,throw error
-                printf("error: duplicate local symbol %s in function %s ", identifierName, functionEntry->name);
+                printf("error on line %d: duplicate local symbol %s in function %s ", lineNumber, identifierName, functionEntry->name);
                 exit(1);
             }
         }
@@ -385,7 +386,7 @@ int identifierWasDeclared(int owner)
         int globalIndex = getSymbolIndex(SymbolTable, symbolTableIndex, currString);
         if (globalIndex == -1)
         {
-            printf("error: symbol %s is not defined!", currString);
+            printf("error on line %d: symbol %s is not defined!", lineNumber, currString);
             exit(1);
         }
         else
@@ -405,7 +406,7 @@ int identifierWasDeclared(int owner)
             int globalIndex = getSymbolIndex(SymbolTable, symbolTableIndex, currString);
             if (globalIndex == -1)
             {
-                printf("error: symbol %s is not defined!", currString);
+                printf("error on line %d: symbol %s is not defined!",lineNumber, currString);
                 exit(1);
             }
             else
@@ -674,7 +675,7 @@ AST* makePrimaryExpressionAST(int owner)
     }
     else
     {
-        printf("error: invalid token: expected %s %s", "int", "<currStringifier-name>");
+        printf("error on line %d: invalid token: expected type specifier or identifier!", lineNumber);
         exit(1);
     }
 
@@ -694,8 +695,10 @@ void getNextToken()
 {
     int currChar = fgetc(fptr);
 
-    while (isSpace(currChar) || currChar == '\n' || currChar == '\t') // skip white space and newline
+    while (isSpace(currChar) || currChar == '\n' || currChar == '\t') {// skip white space and newline
+        if(currChar == '\n') ++lineNumber;
         currChar = fgetc(fptr);
+    }
 
     if (currChar == '_' || isLetter(currChar))
     {
@@ -792,7 +795,7 @@ void getNextToken()
             currToken.token = TOK_COMMA;
             break;
         default: // error: unrecognised char
-            printf("error: unrecognised character");
+            printf("error on line %d:  unrecognised character", lineNumber);
             exit(1);
         }
     }
@@ -831,7 +834,7 @@ int getArithmeticOp(int t)
     }
     else
     {
-        printf("error: invalid token: expected %c or %c or %c or %c or %c or %c", '%', '*', '/', '+', '-', ';');
+        printf("error on line %d: invalid token: expected %c or %c or %c or %c or %c or %c", lineNumber, '%', '*', '/', '+', '-', ';');
         exit(1);
     }
 
@@ -967,7 +970,7 @@ AST *declareStatement(int owner)
         }
         else
         {
-            printf("error: invalid token: expected %s or %s", "number", "identifier");
+            printf("error on line %d: invalid token: expected %s or %s", lineNumber, "number", "identifier");
             exit(1);
         }
     }
@@ -981,7 +984,7 @@ AST *declareStatement(int owner)
 
         if (owner != 0)
         {
-            printf("error: functions can only be declared global!");
+            printf("error on line %d: functions can only be declared global!", lineNumber);
             exit(1);
         }
 
@@ -1057,7 +1060,7 @@ AST *declareStatement(int owner)
     }
     else
     {
-        printf("error: invalid token: expected %c or %c", ';', '=');
+        printf("error on line %d: invalid token: expected %c or %c", lineNumber, ';', '=');
         exit(1);
     }
 }
@@ -1092,7 +1095,7 @@ AST *returnStatement(int owner)
 {
     if (owner == 0)
     { // program return is in main
-        printf("error: expected a declaration but got return!");
+        printf("error on line %d: expected a declaration but got return!", lineNumber);
         exit(1);
     }
 
@@ -1107,7 +1110,7 @@ AST *returnStatement(int owner)
     { // return a number constant
         if (functionEntry->type_specifier != 0)
         {
-            printf("error: incompatible return type specifier!"); // later we will check the return for overflow, imcompatible casts, pointer from literal etc
+            printf("error on line %d: incompatible return type specifier!", lineNumber); // later we will check the return for overflow, imcompatible casts, pointer from literal etc
             exit(1);
         }
     }
@@ -1115,7 +1118,7 @@ AST *returnStatement(int owner)
     { // return a variable
         if (functionEntry->type_specifier != 0)
         {
-            printf("error: incompatible return type specifier!"); // later we will check the return for overflow, imcompatible casts, pointer from literal etc
+            printf("error on line %d: incompatible return type specifier!", lineNumber); // later we will check the return for overflow, imcompatible casts, pointer from literal etc
             exit(1);
         }
     }
@@ -1165,11 +1168,11 @@ AST *functionCall(int owner)
     }
 
     if(argNr < 0) {
-        printf("error: too many arguments in %s function call\n", functionEntry->name);
+        printf("error on line %d: too many arguments in %s function call\n", lineNumber, functionEntry->name);
         exit(1);
     }
     else if(argNr > 0) {
-        printf("error: too few arguments in %s function call\n", functionEntry->name);
+        printf("error on line %d: too few arguments in %s function call\n", lineNumber, functionEntry->name);
         exit(1);
     }
 
@@ -1193,7 +1196,7 @@ AST *assignmentOrFunctionCall(int owner)
     }
     else
     {
-        printf("error: invalid statement, expected assignment or function call!");
+        printf("error on line %d: invalid statement, expected assignment or function call!", lineNumber);
         exit(1);
     }
 }
@@ -1223,7 +1226,7 @@ AST *statement(int owner)
     }
     else
     {
-        printf("error: invalid token; expected a statement");
+        printf("error on line %d: invalid token; expected a statement", lineNumber);
         exit(1);
     }
 }
