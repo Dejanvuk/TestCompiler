@@ -18,7 +18,7 @@ debug_run:
 	gdb --args $(OUT) $(TEST_FILE) core
 
 assemble_run: 
-	gcc -c test.s -o test.o
+	gcc -c test.s -o test.o 
 	gcc test.o -o test
 	chmod a+x test
 

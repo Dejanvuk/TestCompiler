@@ -7,7 +7,7 @@
 	.type	s, @object
 	.size	s, 8
 s:
-	.quad	12
+	.quad	2
 	.text
 	.globl	sev
 	.type	sev, @function
@@ -38,13 +38,30 @@ sev:
 	mov	rsp, rbp
 	pop	rbp
 	ret
+	.globl	foo
+	.type	foo, @function
+foo:
+	push	rbp
+	mov	rbp, rsp
+	sub rsp, 8
+	mov r8, rdi
+	mov r9, 2
+	imul r8, r9
+	mov -8[rbp], r8
+	mov r8, -8[rbp]
+	mov r9, 3
+	imul r8, r9
+	mov rax, r8                               # place the return into rax
+	mov	rsp, rbp
+	pop	rbp
+	ret
 	.globl	main
 	.type	main, @function
 main:
 	push	rbp
 	mov	rbp, rsp
-	sub rsp, 16
-	mov r8, 44
+	sub rsp, 24
+	mov r8, 3
 	mov r9, 2
 	imul r8, r9
 	mov -8[rbp], r8
@@ -56,11 +73,17 @@ main:
 	mov rcx, 4
 	mov rdx, 3
 	mov rsi, 2
-	mov rdi, 1
+	mov r10, s[rip]
+	mov rdi, r10
 	call	sev                               # called function "sev"
 	mov r8, rax
 	mov -16[rbp], r8
-	mov r8, -16[rbp]
+	mov r10, -16[rbp]
+	mov rdi, r10
+	call	foo                               # called function "foo"
+	mov r8, rax
+	mov -24[rbp], r8
+	mov r8, -24[rbp]
 	mov rax, r8                               # place the return into rax
 	mov	rsp, rbp
 	pop	rbp
