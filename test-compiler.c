@@ -372,56 +372,39 @@ int addSymbolToTheOwnersTable(int owner, char *identifierName, char *typeSpecifi
     }
 }
 
-/* 
+/*
 Basic syntax analysis 
+Checks where the current string read was declared previously
+return: -1 : not declared 0 - declared global 1 - declared local
 Checks where the current string read was declared previously, local table has precedence over global
-if the local string is a global variable, we copy the global's variable entry table over the local function table
-return : the index in the table of the declared identifier
 */
 
 int identifierWasDeclared(int owner)
 {
     if (owner == 0)
-    { // should be removed as only constant values are allowed as rvalue in global variables
+    {
         int globalIndex = getSymbolIndex(SymbolTable, symbolTableIndex, currString);
         if (globalIndex == -1)
-        {
-            printf("error on line %d: symbol %s is not defined!", lineNumber, currString);
-            exit(1);
-        }
+            return -1;
         else
-        {
-            return globalIndex;
-        }
+            return 0;
     }
     else
-    { // owner is a function
-        // then search in the local owner table
+    {
         ENTRY *functionEntry = lookupSymbol(SymbolTable, owner);
         ENTRY **table = functionEntry->localSymbolTable;
         int size = functionEntry->localSymbolTableIndex;
-        int localIndex = getSymbolIndex(table, size, currString);
+        int localIndex = getSymbolIndex(table, size, currString); // check the local functions table first
         if (localIndex == -1)
-        { // // search maybe the variable is global
-            int globalIndex = getSymbolIndex(SymbolTable, symbolTableIndex, currString);
+        {
+            int globalIndex = getSymbolIndex(SymbolTable, symbolTableIndex, currString); // then check the global table
             if (globalIndex == -1)
-            {
-                printf("error on line %d: symbol %s is not defined!",lineNumber, currString);
-                exit(1);
-            }
+                return -1;
             else
-            {
-                /*either:
-                add a new symbol entry in the local table, with owner 0 and index poting to the index of the program's table
-                or just copy the symbol entry from the global to the local
-                here we use the latter */
-                ENTRY *pEntry = lookupSymbol(SymbolTable, globalIndex);
-                int pIndex = addSymbolToTheOwnersTable(owner, pEntry->name, typeSpecifierToStr(pEntry->type_specifier), pEntry->type, 0);
-                return pIndex;
-            }
+                return 0;
         }
         else
-            return localIndex;
+            return 1;
     }
 }
 
@@ -475,12 +458,15 @@ int getSymbolIndex(ENTRY **table, int size, char *name)
 /* return the number of parameters the function has */
 int getNrOfParameters(ENTRY **table, int tableSize)
 {
+    if (tableSize == 0)
+        return 0;
+
     int nr = 0;
     ENTRY *tempE = lookupSymbol(table, nr);
     while (tempE->scope == 2)
     {
         nr++;
-        if(nr >= tableSize ) 
+        if (nr >= tableSize)
             return nr;
         tempE = lookupSymbol(table, nr);
     }
@@ -489,6 +475,9 @@ int getNrOfParameters(ENTRY **table, int tableSize)
 
 int getLocalStackSize(ENTRY **table, int tableSize)
 {
+    if (tableSize == 0)
+        return 0;
+
     int start = getNrOfParameters(table, tableSize);
     int stackSize = 0;
     for (int i = start; i < tableSize; i++)
@@ -575,7 +564,7 @@ int getLocalOffset(ENTRY **table, int index, int tableSize)
     return offset;
 }
 
-AST *makeAST(int op, int value, AST *left, AST *mid, AST *right)
+AST *makeAST(int op, int value, AST *left, AST *mid, AST *right, bool isGlobal)
 {
     AST *e = (AST *)malloc(sizeof(AST));
 
@@ -590,27 +579,33 @@ AST *makeAST(int op, int value, AST *left, AST *mid, AST *right)
     e->left = left;
     e->mid = mid;
     e->right = right;
+    e->isGlobal = isGlobal;
     return e;
 }
 
 AST *makeChildlessAST(int op, int value)
 {
-    return makeAST(op, value, NULL, NULL, NULL);
+    return makeAST(op, value, NULL, NULL, NULL, false);
 }
 
 AST *makeOneChildAST(int op, int value, AST *left)
 {
-    return makeAST(op, value, left, NULL, NULL);
+    return makeAST(op, value, left, NULL, NULL, false);
+}
+
+AST *makeIdentifierAST(int value, AST *left, bool isGlobal)
+{
+    return makeAST(op_IDENTIFIER, value, left, NULL, NULL, isGlobal);
 }
 
 AST *makeProgramAST(AST *left)
 {
-    return makeAST(op_PROGRAM, 0, left, NULL, NULL);
+    return makeAST(op_PROGRAM, 0, left, NULL, NULL, false);
 };
 
 AST *makeArithmeticExpressionAST(int op, AST *left, AST *right)
 {
-    return makeAST(op, 0, left, NULL, right);
+    return makeAST(op, 0, left, NULL, right, false);
 };
 
 /*
@@ -620,12 +615,12 @@ for functions: left -> arguments
 */
 AST *makeDeclareAST(int op, int symbolIndex, AST *left, AST *mid, AST *right)
 {
-    return makeAST(op, symbolIndex, left, mid, right);
+    return makeAST(op, symbolIndex, left, mid, right, false);
 };
 
 AST *makeAssignmentAST(int op, int symbolIndex, AST *left)
 {
-    return makeAST(op, symbolIndex, left, NULL, NULL);
+    return makeAST(op, symbolIndex, left, NULL, NULL, false);
 };
 
 /* 
@@ -634,7 +629,7 @@ left -> expressionAst
 */
 AST *makeReturnAST(AST *left)
 {
-    return makeAST(op_RETURN, 0, left, NULL, NULL);
+    return makeAST(op_RETURN, 0, left, NULL, NULL, false);
 };
 
 /* 
@@ -643,15 +638,15 @@ mid -> arguments
 */
 AST *makeFunctionCallAST(int symbolIndex, AST *mid)
 {
-    return makeAST(op_FCALL, symbolIndex, NULL, mid, NULL);
+    return makeAST(op_FCALL, symbolIndex, NULL, mid, NULL, false);
 };
 
 /* 
 owner: the index in the symbol table of the owner of this expression, 0-program , X-function
 */
-AST* makePrimaryExpressionAST(int owner)
+AST *makePrimaryExpressionAST(int owner)
 {
-    AST* ast = NULL;
+    AST *ast = NULL;
 
     if (currToken.token == TOK_INT)
     {
@@ -659,18 +654,55 @@ AST* makePrimaryExpressionAST(int owner)
     }
     else if (currToken.token == TOK_IDENTIFIER)
     {
-        int identIndex = identifierWasDeclared(owner);
+        // get details about the identifier
+
+        int identIndex = -1;
+        bool identifierIsGlobal = false;
+
+        // get details about the identifier
+        if (owner == 0)
+        { // only constant values are allowed as rvalue in global variables
+            printf("error on line %d: global expressions can't containt identifiers!", lineNumber);
+            exit(1);
+        }
+
+        // then search in the local owner table
+        ENTRY *functionEntry = lookupSymbol(SymbolTable, owner);
+        ENTRY **table = functionEntry->localSymbolTable;
+        int size = functionEntry->localSymbolTableIndex;
+        int localIndex = getSymbolIndex(table, size, currString);
+        if (localIndex == -1)
+        { // // search maybe the variable is global
+            int globalIndex = getSymbolIndex(SymbolTable, symbolTableIndex, currString);
+            if (globalIndex == -1)
+            {
+                printf("error on line %d: symbol %s is not defined!", lineNumber, currString);
+                exit(1);
+            }
+            else
+            {
+                // don't add global identifiers to the local symbol table
+                identIndex = globalIndex;
+                identifierIsGlobal = true;
+            }
+        }
+        else
+        {
+            identIndex = localIndex;
+        }
 
         // EITHER function call or variable, check the next symbol
         int currChar = fgetc(fptr);
 
-        if(currChar == '(') { // it's a function call
+        if (currChar == '(')
+        { // it's a function call
             ast = functionCall(owner);
         }
-        else {
+        else
+        {
             // put back the arithmetic op
             ungetc(currChar, fptr);
-            ast = makeOneChildAST(op_IDENTIFIER, identIndex, NULL);
+            ast = makeIdentifierAST(identIndex, NULL, identifierIsGlobal);
         }
     }
     else
@@ -695,8 +727,10 @@ void getNextToken()
 {
     int currChar = fgetc(fptr);
 
-    while (isSpace(currChar) || currChar == '\n' || currChar == '\t') {// skip white space and newline
-        if(currChar == '\n') ++lineNumber;
+    while (isSpace(currChar) || currChar == '\n' || currChar == '\t')
+    { // skip white space and newline
+        if (currChar == '\n')
+            ++lineNumber;
         currChar = fgetc(fptr);
     }
 
@@ -1136,9 +1170,9 @@ AST *functionCall(int owner)
     AST *firstArgAst = NULL;
     AST *prevArgAst = NULL;
 
-    getNextToken(); // get the first argument 
+    getNextToken(); // get the first argument
 
-    ENTRY* functionEntry = lookupSymbol(SymbolTable, identIndex); // look the details of the functions up in case we need to verify
+    ENTRY *functionEntry = lookupSymbol(SymbolTable, identIndex); // look the details of the functions up in case we need to verify
 
     int argNr = getNrOfParameters(functionEntry->localSymbolTable, functionEntry->localSymbolTableIndex);
 
@@ -1167,11 +1201,13 @@ AST *functionCall(int owner)
         getNextToken();
     }
 
-    if(argNr < 0) {
+    if (argNr < 0)
+    {
         printf("error on line %d: too many arguments in %s function call\n", lineNumber, functionEntry->name);
         exit(1);
     }
-    else if(argNr > 0) {
+    else if (argNr > 0)
+    {
         printf("error on line %d: too few arguments in %s function call\n", lineNumber, functionEntry->name);
         exit(1);
     }
@@ -1182,7 +1218,11 @@ AST *functionCall(int owner)
 AST *assignmentOrFunctionCall(int owner)
 {
     // basic syntax analysis
-    identifierWasDeclared(owner);
+    if (identifierWasDeclared(owner) == -1)
+    {
+        printf("error on line %d: symbol %s is not defined!", lineNumber, currString);
+        exit(1);
+    }
 
     getNextToken(); // either '=' or '('
 
@@ -1473,45 +1513,51 @@ int parsePrimaryAst(AST *ast, int owner)
 
         reg = getAvailableRegister();
         // get the owner's table
-        ENTRY *e = getEntryFromOwner(owner, ast->value);
+        ENTRY *e = NULL;
         char *destOperand = addedPurposeRegisters[reg];
         char *srcOperand = malloc(32 * sizeof(char));
         // check to see if the variable is either global,local or local argument
-        if (e->scope == 0)
+        if (ast->isGlobal == true)
         { // global variable
+            e = getEntryFromOwner(0, ast->value);
             sprintf(srcOperand, "%s[%s]", e->name, specialPurposeRegisters[2]);
         }
-        else if (e->scope == 1)
+        else if (ast->isGlobal == false)
         { // local
-            // determine the offset to sub from rbp
-            char *offset = NULL;
-            ENTRY* ownerEntry = lookupSymbol(SymbolTable, owner);
-            intToStr(getLocalOffset(ownerEntry->localSymbolTable, e->index, ownerEntry->localSymbolTableIndex), &offset);
-            sprintf(srcOperand, "-%s[%s]", offset, specialPurposeRegisters[1]);
-        }
-        else
-        { //argument
-            // if more than 6 arguments check the stack for the rest
-            if (e->index > 5)
-            {
-                // determine the offset to add from rbp
+            e = getEntryFromOwner(owner, ast->value);
+            if (e->scope == 1)
+            { // local
+                // determine the offset to sub from rbp
                 char *offset = NULL;
-                intToStr(getArgOffset(lookupSymbol(SymbolTable, owner)->localSymbolTable, e->index, 6), &offset);
-                sprintf(srcOperand, "%s[%s]", offset, specialPurposeRegisters[1]);
+                ENTRY *ownerEntry = lookupSymbol(SymbolTable, owner);
+                intToStr(getLocalOffset(ownerEntry->localSymbolTable, e->index, ownerEntry->localSymbolTableIndex), &offset);
+                sprintf(srcOperand, "-%s[%s]", offset, specialPurposeRegisters[1]);
             }
-            else
-            {
-                // determine the register the parameter value was stored into
-                getRegisterParameter(e->index, &srcOperand);
+            else if (e->scope == 2)
+            { //argument
+                // if more than 6 arguments check the stack for the rest
+                if (e->index > 5)
+                {
+                    // determine the offset to add from rbp
+                    char *offset = NULL;
+                    intToStr(getArgOffset(lookupSymbol(SymbolTable, owner)->localSymbolTable, e->index, 6), &offset);
+                    sprintf(srcOperand, "%s[%s]", offset, specialPurposeRegisters[1]);
+                }
+                else
+                {
+                    // determine the register the parameter value was stored into
+                    getRegisterParameter(e->index, &srcOperand);
+                }
             }
         }
         asm_mov_write(destOperand, srcOperand);
     }
-    else if(op_FCALL) {
+    else if (op_FCALL)
+    {
         reg = getAvailableRegister();
 
         parseFunctionCallAst(ast, owner);
-         // move the rax value into a register and return it
+        // move the rax value into a register and return it
         asm_mov_write(addedPurposeRegisters[reg], generalPurposeRegisters[0]);
     }
 
@@ -1522,7 +1568,7 @@ int parseArithmeticTree(AST *ast, int owner)
 {
     if (ast->left == NULL)
     {
-       return parsePrimaryAst(ast,owner);
+        return parsePrimaryAst(ast, owner);
     }
 
     int leftReg = parseArithmeticTree(ast->left, owner);
@@ -1663,10 +1709,12 @@ void parseDeclarationAst(AST *ast, int owner)
 
             // get the number of arguments and restricts r8 & r9 if they contain arguments
             int nrOfArguments = getNrOfParameters(e->localSymbolTable, e->localSymbolTableIndex);
-            if(nrOfArguments == 5) {
+            if (nrOfArguments == 5)
+            {
                 availableAddedPurposeRegisters[0] = 1;
             }
-            else if(nrOfArguments >= 6) {
+            else if (nrOfArguments >= 6)
+            {
                 availableAddedPurposeRegisters[0] = 1;
                 availableAddedPurposeRegisters[1] = 1;
             }
@@ -1678,10 +1726,12 @@ void parseDeclarationAst(AST *ast, int owner)
             asm_functionPostamble();
 
             // unrestrict r* r9 if they were used to pass arguments
-            if(nrOfArguments == 5) {
+            if (nrOfArguments == 5)
+            {
                 availableAddedPurposeRegisters[0] = 0;
             }
-            else if(nrOfArguments >= 6) {
+            else if (nrOfArguments >= 6)
+            {
                 availableAddedPurposeRegisters[0] = 0;
                 availableAddedPurposeRegisters[1] = 0;
             }
@@ -1704,7 +1754,7 @@ void parseDeclarationAst(AST *ast, int owner)
                 char *srcOperand = addedPurposeRegisters[resultReg];
                 ;
                 char *offset = NULL;
-                ENTRY* ownerEntry = lookupSymbol(SymbolTable, owner);
+                ENTRY *ownerEntry = lookupSymbol(SymbolTable, owner);
                 intToStr(getLocalOffset(ownerEntry->localSymbolTable, e->index, ownerEntry->localSymbolTableIndex), &offset);
                 sprintf(destOperand, "-%s[%s]", offset, specialPurposeRegisters[1]);
                 asm_mov_write(destOperand, srcOperand);
@@ -1741,7 +1791,7 @@ void parseDeclarationAst(AST *ast, int owner)
 void parseAssignAst(AST *ast, int owner)
 {
     ENTRY *e = getEntryFromOwner(owner, ast->value);
-    char* destOperand = malloc(32 * sizeof(char));
+    char *destOperand = malloc(32 * sizeof(char));
     char *srcOperand = NULL;
 
     // check whether the symbol is global or local
@@ -1761,7 +1811,7 @@ void parseAssignAst(AST *ast, int owner)
         srcOperand = addedPurposeRegisters[resultReg];
 
         char *offset = NULL;
-        ENTRY* ownerEntry = lookupSymbol(SymbolTable, owner);
+        ENTRY *ownerEntry = lookupSymbol(SymbolTable, owner);
         intToStr(getLocalOffset(ownerEntry->localSymbolTable, e->index, ownerEntry->localSymbolTableIndex), &offset);
         sprintf(destOperand, "-%s[%s]", offset, specialPurposeRegisters[1]);
         asm_mov_write(destOperand, srcOperand);
@@ -1819,37 +1869,43 @@ int passFunctionCallParameters(AST *ast, int argc, int owner)
 {
     int totalSize = 0;
 
-    if(ast->left)
-        passFunctionCallParameters(ast->left,argc+1,owner);
-    else 
+    if (ast->left)
+        passFunctionCallParameters(ast->left, argc + 1, owner);
+    else
         totalSize = argc;
 
-    if(argc > 5) { // push it on the stack 
-        if(ast->op == op_INT) {
-            char* val = NULL;
+    if (argc > 5)
+    { // push it on the stack
+        if (ast->op == op_INT)
+        {
+            char *val = NULL;
             intToStr(ast->value, &val);
             asm_push_write(val);
         }
-        else {
+        else
+        {
             int regValue = parsePrimaryAst(ast, owner); // later will register of expr
             asm_push_write(addedPurposeRegisters[regValue]);
             availableAddedPurposeRegisters[regValue] = 0;
         }
     }
-    else { // find the proper register for the value
-        char* registerToPush = NULL;
+    else
+    { // find the proper register for the value
+        char *registerToPush = NULL;
         getRegisterParameter(argc, &registerToPush);
-        if(ast->op == op_INT) {
-            char* val = NULL;
+        if (ast->op == op_INT)
+        {
+            char *val = NULL;
             intToStr(ast->value, &val);
             asm_mov_write(registerToPush, val);
             // make sure to tick r8 and r9 as unavailable untill the function call
-            if(argc == 4 )
+            if (argc == 4)
                 availableAddedPurposeRegisters[0] = 1;
-            else if(argc == 5 )
+            else if (argc == 5)
                 availableAddedPurposeRegisters[1] = 1;
         }
-        else {
+        else
+        {
             int regValue = parsePrimaryAst(ast, owner); // later will register of expr
             asm_mov_write(registerToPush, addedPurposeRegisters[regValue]);
             availableAddedPurposeRegisters[regValue] = 0;
@@ -1865,26 +1921,28 @@ void parseFunctionCallAst(AST *ast, int owner)
 
     if (ast->mid)
     { // if function has arguments
-        AST* firstArg = ast->mid;
-        
-        int argSize = passFunctionCallParameters(firstArg,0,  owner);
+        AST *firstArg = ast->mid;
+
+        int argSize = passFunctionCallParameters(firstArg, 0, owner);
 
         fprintf(ofptr, "\n\t%s\t%s", controlFlowInstructions[9], e->name);
         fprintf(ofptr, "                               # called function \"%s\"", e->name);
 
         // after the asm call to function make the registers r8,9 available again if they were used
-        if(argSize == 4) {
+        if (argSize == 4)
+        {
             // clear r8
             availableAddedPurposeRegisters[0] = 0;
-
         }
-        else if(argSize >= 5) {
+        else if (argSize >= 5)
+        {
             // clear both r8 and r9
             availableAddedPurposeRegisters[0] = 0;
             availableAddedPurposeRegisters[1] = 0;
         }
     }
-    else {
+    else
+    {
         fprintf(ofptr, "\n\t%s\t%s", controlFlowInstructions[9], e->name);
         fprintf(ofptr, "                               # called function \"%s\"", e->name);
     }

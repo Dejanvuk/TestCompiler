@@ -2,7 +2,9 @@
 
 #include "ast.h"
 
-AST* makeAST(int, int, AST*, AST*, AST*);
+AST* makeAST(int, int, AST*, AST*, AST*, bool);
+
+AST* makeIdentifierAST(int, AST*, bool);
 
 AST* makeChildlessAST(int, int);
 
@@ -61,7 +63,7 @@ int addSymbolEntry(ENTRY**, int*, char*, char*, int, int, int);
 
 int addSymbolToTheOwnersTable(int, char*, char*, int, int);
 
-int identifierWasDeclared(int);
+int checkidentfifi(int);
 
 ENTRY* lookupSymbol(ENTRY**, int);
 

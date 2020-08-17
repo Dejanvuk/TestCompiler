@@ -7,6 +7,7 @@ typedef struct ast {
     struct ast* left;
     struct ast* mid;
     struct ast* right;
+    bool isGlobal; // for identifiers only
 } AST;
 
 #endif

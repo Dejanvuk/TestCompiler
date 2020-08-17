@@ -1,5 +1,7 @@
 tc
 test2.c
+test.s
+test.c
 .vscode
 test-compiler
 asmtest.c
