@@ -17,9 +17,11 @@ AST* makeArithmeticExpressionAST (int,AST*, AST*);
 /*
 left -> expression
 */
-AST* makeDeclareAST (int,int, AST*, AST*, AST*);
+AST* makeDeclareAST (int, AST*, AST*, AST*);
 
 AST* makeAssignmentAST (int,int, AST*);
+
+AST *makeConditionalAST(int, AST*, AST*);
 
 AST* makePrimaryExpressionAST (int);
 
@@ -31,7 +33,7 @@ AST* declareStatement(int);
 
 AST* assignmentStatement(int);
 
-AST* selectionStatement();
+AST* conditionalStatement(int);
 
 AST* returnStatement(int);
 

@@ -186,38 +186,31 @@ bool accept(int t)
     return currToken.token == t;
 }
 
-bool expect(Token t)
-{
-    if (accept(t.token))
-    {
-        return true;
-    }
-    else
-    {
-        return false;
-    }
-}
-
 enum
-{                  // terminal symbols
-    TOK_EOF = EOF, // -1
-    TOK_MOD,
+{                             // terminal symbols
+    TOK_EOF = EOF,            // -1
+    TOK_MOD,                  // %
     TOK_MULT,                 // *
     TOK_DIV,                  // /
     TOK_PLUS,                 // +
     TOK_MINUS,                // -
     TOK_ROUND_BRACKET_OPEN,   // '('
     TOK_ROUND_BRACKET_CLOSE,  // ')'
+    TOK_EQUAL,                // '=='
+    TOK_LE,                   // '<='
+    TOK_GE,                   // '>='
+    TOK_G,                    // '>'
+    TOK_L,                    // '<'
     TOK_TYPE_SPECIFIER,       // 'int', 'double'
     TOK_ASSIGN,               // =
-    TOK_IDENTIFIER,           // variable
+    TOK_IDENTIFIER,           // variable 14
     TOK_INT,                  // int
     TOK_CURLY_BRACKET_OPEN,   // '{'
     TOK_CURLY_BRACKET_CLOSE,  // '{'
     TOK_SQUARE_BRACKET_CLOSE, // '['
     TOK_SQUARE_BRACKET_OPEN,  // ']'
-    TOK_IF,                   // 'if'
-    TOK_ELSE_IF,              // 'else if'
+    TOK_IF,                   // 'if' 20
+    TOK_ELSE_IF,              // 'else if' 21
     TOK_ELSE,                 // 'else
     TOK_SMCL,                 // ';'
     TOK_COMMA,                // ,
@@ -230,7 +223,13 @@ int precedenceTable[] = {
     2, // DIV
     3, // PLUS
     3, // MINUS
-    4, // ROUND BRACKET OPEN
+    5, // ROUND BRACKET OPEN
+    5, // ROUND BRACKET CLOSE
+    4, // '=='
+    4, // '<='
+    4, // '>='
+    4, // '>'
+    4  // '<'
 };
 enum
 {
@@ -245,7 +244,15 @@ enum
     op_IDENTIFIER,
     op_INT,
     op_RETURN,
-    op_FCALL
+    op_FCALL,
+    op_EQUAL,
+    op_LE,
+    op_GE,
+    op_L,
+    op_G,
+    op_IF, // 17
+    op_ELSEIF, // 18
+    op_ELSE // 19
 };
 
 int getTypeSpecifier(char *type)
@@ -613,9 +620,9 @@ for variables: left -> expression
 for functions: left -> arguments
                 mid -> statements
 */
-AST *makeDeclareAST(int op, int symbolIndex, AST *left, AST *mid, AST *right)
+AST *makeDeclareAST(int symbolIndex, AST *left, AST *mid, AST *right)
 {
-    return makeAST(op, symbolIndex, left, mid, right, false);
+    return makeAST(op_DECLARE, symbolIndex, left, mid, right, false);
 };
 
 AST *makeAssignmentAST(int op, int symbolIndex, AST *left)
@@ -639,6 +646,16 @@ mid -> arguments
 AST *makeFunctionCallAST(int symbolIndex, AST *mid)
 {
     return makeAST(op_FCALL, symbolIndex, NULL, mid, NULL, false);
+};
+
+/*
+left -> conditional expression
+mid -> statements insidede of if()
+right -> either else if or else conditional or null
+*/
+AST *makeConditionalAST(int op, AST *left, AST *mid)
+{
+    return makeAST(op, -1, left, mid, NULL, false);
 };
 
 /* 
@@ -758,6 +775,18 @@ void getNextToken()
         {
             currToken.token = TOK_RETURN;
         }
+        else if (!strcmp(currString, "if"))
+        {
+            currToken.token = TOK_IF;
+        }
+        else if (!strcmp(currString, "else"))
+        {
+            currToken.token = TOK_ELSE;
+        }
+        else if (!strcmp(currString, "else if"))
+        {
+            currToken.token = TOK_ELSE_IF;
+        }
         else
         { //it's an identifier
             currToken.token = TOK_IDENTIFIER;
@@ -787,48 +816,101 @@ void getNextToken()
     }
     else
     {
-        switch (currChar)
+        if (currChar == '+')
         {
-        case '+':
             currToken.token = TOK_PLUS;
-            break;
-        case '-':
+        }
+        else if (currChar == '-')
+        {
             currToken.token = TOK_MINUS;
-            break;
-        case '*':
+        }
+        else if (currChar == '*')
+        {
             currToken.token = TOK_MULT;
-            break;
-        case '/':
+        }
+        else if (currChar == '/')
+        {
             currToken.token = TOK_DIV;
-            break;
-        case '%':
+        }
+        else if (currChar == '%')
+        {
             currToken.token = TOK_MOD;
-            break;
-        case TOK_EOF:
+        }
+        else if (currChar == TOK_EOF)
+        {
             currToken.token = TOK_EOF;
-            break;
-        case '=':
-            currToken.token = TOK_ASSIGN;
-            break;
-        case ';':
+        }
+        else if (currChar == '=')
+        {
+            // either = or ==
+            int currChar = fgetc(fptr);
+
+            if (currChar == '=')
+            {
+                currToken.token = TOK_EQUAL;
+            }
+            else
+            {
+                ungetc(currChar, fptr);
+                currToken.token = TOK_ASSIGN;
+            }
+        }
+        else if (currChar == '>')
+        {
+            // either > or >=
+            int currChar = fgetc(fptr);
+
+            if (currChar == '=')
+            {
+                currToken.token = TOK_GE;
+            }
+            else
+            {
+                ungetc(currChar, fptr);
+                currToken.token = TOK_G;
+            }
+        }
+        else if (currChar == '<')
+        {
+            // either < or <=
+            int currChar = fgetc(fptr);
+
+            if (currChar == '=')
+            {
+                currToken.token = TOK_LE;
+            }
+            else
+            {
+                ungetc(currChar, fptr);
+                currToken.token = TOK_L;
+            }
+        }
+        else if (currChar == ';')
+        {
             currToken.token = TOK_SMCL;
-            break;
-        case '(':
+        }
+        else if (currChar == '(')
+        {
             currToken.token = TOK_ROUND_BRACKET_OPEN;
-            break;
-        case ')':
+        }
+        else if (currChar == ')')
+        {
             currToken.token = TOK_ROUND_BRACKET_CLOSE;
-            break;
-        case '{':
+        }
+        else if (currChar == '{')
+        {
             currToken.token = TOK_CURLY_BRACKET_OPEN;
-            break;
-        case '}':
+        }
+        else if (currChar == '}')
+        {
             currToken.token = TOK_CURLY_BRACKET_CLOSE;
-            break;
-        case ',':
+        }
+        else if (currChar == ',')
+        {
             currToken.token = TOK_COMMA;
-            break;
-        default: // error: unrecognised char
+        }
+        else
+        {
             printf("error on line %d:  unrecognised character", lineNumber);
             exit(1);
         }
@@ -843,7 +925,7 @@ void getNextToken()
  * ====================PARSER====================
  */
 
-int getArithmeticOp(int t)
+int getExpressionOp(int t)
 {
     int arithmeticOp;
     if (t == TOK_MOD)
@@ -866,9 +948,29 @@ int getArithmeticOp(int t)
     {
         arithmeticOp = op_MINUS;
     }
+    else if (t == TOK_EQUAL)
+    {
+        arithmeticOp = op_EQUAL;
+    }
+    else if (t == TOK_LE)
+    {
+        arithmeticOp = op_LE;
+    }
+    else if (t == TOK_GE)
+    {
+        arithmeticOp = op_GE;
+    }
+    else if (t == TOK_L)
+    {
+        arithmeticOp = op_L;
+    }
+    else if (t == TOK_G)
+    {
+        arithmeticOp = op_G;
+    }
     else
     {
-        printf("error on line %d: invalid token: expected %c or %c or %c or %c or %c or %c", lineNumber, '%', '*', '/', '+', '-', ';');
+        printf("error on line %d: invalid token: expected %c or %c or %c or %c or %c or %c or %s", lineNumber, '%', '*', '/', '+', '-', ';', "boolean comparator");
         exit(1);
     }
 
@@ -940,13 +1042,13 @@ AST *expressionStatement(int previousTokenPrecedence, int owner)
                 int newLocalToken = currToken.token;
                 getNextToken(); // int/identifier or could be followed by one or many (
                 AST *newRight = expressionStatement(precedenceTable[localToken], owner);
-                right = makeArithmeticExpressionAST(getArithmeticOp(newLocalToken), right, newRight);
+                right = makeArithmeticExpressionAST(getExpressionOp(newLocalToken), right, newRight);
             }
         }
         else
             right = expressionStatement(precedenceTable[localToken], owner);
 
-        left = makeArithmeticExpressionAST(getArithmeticOp(localToken), left, right);
+        left = makeArithmeticExpressionAST(getExpressionOp(localToken), left, right);
 
         if (accept(TOK_ROUND_BRACKET_CLOSE))
         {
@@ -976,6 +1078,8 @@ AST *declareStatement(int owner)
     char *identifierName = NULL;
     int symbolIndex = -1;
 
+    AST *ast = NULL;
+
     getNextToken(); // get the identifier name
 
     if (accept(TOK_IDENTIFIER))
@@ -983,7 +1087,10 @@ AST *declareStatement(int owner)
         identifierName = currString;
     }
     else
-        error(TOK_IDENTIFIER);
+    {
+        printf("error on line %d : declaration has no identifier!", lineNumber);
+        exit(1);
+    }
 
     getNextToken(); // either ';' or '=' or '('
 
@@ -991,7 +1098,7 @@ AST *declareStatement(int owner)
     {
         // add the symbol to the owner's table and return a declare AST back
         int symbolIndex = addSymbolToTheOwnersTable(owner, identifierName, typeSpecifier, 0, getSymbolScope(owner));
-        return makeDeclareAST(op_DECLARE, symbolIndex, NULL, NULL, NULL);
+        ast = makeDeclareAST(symbolIndex, NULL, NULL, NULL);
     }
     else if (accept(TOK_ASSIGN))
     {
@@ -999,8 +1106,8 @@ AST *declareStatement(int owner)
         getNextToken(); // expression follows
         if (accept(TOK_INT) || accept(TOK_IDENTIFIER))
         {
-            AST *expr = expressionStatement(4, owner);
-            return makeDeclareAST(op_DECLARE, symbolIndex, expr, NULL, NULL);
+            AST *expr = expressionStatement(5, owner);
+            ast = makeDeclareAST(symbolIndex, expr, NULL, NULL);
         }
         else
         {
@@ -1051,7 +1158,7 @@ AST *declareStatement(int owner)
                 error(TOK_IDENTIFIER);
 
             int argIndex = addSymbolToTheOwnersTable(symbolIndex, identifierName, typeSpecifier, 0, 2);
-            AST *currArgAST = makeDeclareAST(op_DECLARE, argIndex, NULL, NULL, NULL);
+            AST *currArgAST = makeDeclareAST(argIndex, NULL, NULL, NULL);
 
             if (firstArgAst == NULL)
             {
@@ -1079,24 +1186,44 @@ AST *declareStatement(int owner)
             AST *currStmtAst = statement(symbolIndex); // owner is the function
             if (firstStatementAst == NULL)
             {
+                if(currStmtAst->op == op_ELSE || currStmtAst->op == op_ELSEIF) {
+                    printf("error on line %d: expected if statement previously!", lineNumber);
+                    exit(1);
+                }
                 firstStatementAst = currStmtAst;
                 prevStatementAst = currStmtAst;
             }
             else
             {
+                if(currStmtAst->op == op_ELSEIF && prevStatementAst->op != op_IF) {
+                    if(prevStatementAst->op != op_ELSEIF) {
+
+                        printf("error: expected 'if' / 'else if' statement before 'else if'!", lineNumber);
+                        exit(1);
+                    }
+                }
+                if(currStmtAst->op == op_ELSE && prevStatementAst->op != op_ELSEIF ) {
+                    if(prevStatementAst->op != op_IF) {
+                        
+                        printf("error: expected 'if' / 'else if' statement before 'else'!", lineNumber);
+                        exit(1);
+                    }
+                }
                 prevStatementAst->right = currStmtAst;
                 prevStatementAst = currStmtAst;
             }
-            getNextToken();
         }
 
-        return makeDeclareAST(op_DECLARE, symbolIndex, firstArgAst, firstStatementAst, NULL);
+        ast = makeDeclareAST(symbolIndex, firstArgAst, firstStatementAst, NULL);
     }
     else
     {
         printf("error on line %d: invalid token: expected %c or %c", lineNumber, ';', '=');
         exit(1);
     }
+
+    getNextToken();
+    return ast;
 }
 
 AST *assignmentStatement(int owner)
@@ -1116,13 +1243,85 @@ AST *assignmentStatement(int owner)
         identIndex = getSymbolIndex(ownersTable, size, currString);
     }
     getNextToken();
-    AST *expr = expressionStatement(4, owner);
+    AST *expr = expressionStatement(5, owner);
     return makeAssignmentAST(OP_ASSIGN, identIndex, expr);
 }
 
-AST *selectionStatement()
+AST *conditionalStatement(int owner)
 {
-    return NULL;
+    if (owner == 0)
+    { // program return is in main
+        printf("error on line %d: conditional statements can't be global!", lineNumber);
+        exit(1);
+    }
+
+    int op = -1;
+    if (accept(TOK_IF))
+    {
+        op = op_IF;
+    }
+    else if (accept(TOK_ELSE))
+    {
+        getNextToken();
+        if(accept(TOK_CURLY_BRACKET_OPEN)) {
+            op = op_ELSE;
+        }
+        else if(accept(TOK_IF)) {
+            op = op_ELSEIF;
+        }
+
+    }
+
+    AST *expr = NULL;
+    AST *firstStatementAst = NULL;
+    AST *prevStatementAst = NULL;
+
+    if (op != op_ELSE) // Skip expr in 'else'
+    {
+        getNextToken(); // expect '('
+
+        if (!accept(TOK_ROUND_BRACKET_OPEN))
+        {
+            printf("error on line %d: expected '(' !", lineNumber);
+            exit(1);
+        }
+
+        // read the expression ast
+        getNextToken();
+        expr = expressionStatement(5, owner);
+
+        getNextToken(); // read the ')'
+    }
+
+    if (!accept(TOK_CURLY_BRACKET_OPEN))
+    {
+        printf("error on line %d: expected '{' !", lineNumber);
+        exit(1);
+    }
+
+    // read the statements inside the block
+
+    getNextToken();
+
+    while (currToken.token != TOK_CURLY_BRACKET_CLOSE)
+    {
+        AST *currStmtAst = statement(owner);
+        if (firstStatementAst == NULL)
+        {
+            firstStatementAst = currStmtAst;
+            prevStatementAst = currStmtAst;
+        }
+        else
+        {
+            prevStatementAst->right = currStmtAst;
+            prevStatementAst = currStmtAst;
+        }
+    }
+
+    getNextToken(); // start next statement
+
+    // we don't have to get the next token as we already read it above if needed
+    return makeConditionalAST(op, expr, firstStatementAst);
 }
 
 AST *returnStatement(int owner)
@@ -1137,7 +1336,7 @@ AST *returnStatement(int owner)
 
     ENTRY *functionEntry = lookupSymbol(SymbolTable, owner);
 
-    AST *expr = expressionStatement(4, owner);
+    AST *expr = expressionStatement(5, owner);
 
     // the return type of the function must match the functions type specifier; currently all functions return int
     if (expr->op == op_INT || expr->op == op_MOD || expr->op == op_DIV || expr->op == op_MULT || expr->op == op_PLUS || expr->op == op_MINUS)
@@ -1156,6 +1355,8 @@ AST *returnStatement(int owner)
             exit(1);
         }
     }
+
+    getNextToken(); // read the next token for the next statement
 
     return makeReturnAST(expr);
 }
@@ -1224,31 +1425,34 @@ AST *assignmentOrFunctionCall(int owner)
         exit(1);
     }
 
+    AST *ast = NULL;
+
     getNextToken(); // either '=' or '('
 
     if (accept(TOK_ASSIGN))
     {
-        return assignmentStatement(owner);
+        ast = assignmentStatement(owner);
     }
     else if (accept(TOK_ROUND_BRACKET_OPEN))
     {
-        return functionCall(owner);
+        ast = functionCall(owner);
     }
     else
     {
         printf("error on line %d: invalid statement, expected assignment or function call!", lineNumber);
         exit(1);
     }
+
+    getNextToken();
+
+    return ast;
 }
 
 AST *statement(int owner)
 {
-    if (currToken.token == TOK_IF)
+    if (currToken.token == TOK_IF || currToken.token == TOK_ELSE || currToken.token == TOK_ELSE_IF)
     {
-        // not yet implemeneted
-        // basic syntax analysis: if the owner is 0 aka program throw error
-        //ast = selectionStatement();
-        return NULL;
+        return conditionalStatement(owner);
     }
     else if (currToken.token == TOK_TYPE_SPECIFIER)
     {
@@ -1288,7 +1492,6 @@ AST *program()
             prevStatement->right = stmt;
             prevStatement = stmt;
         }
-        getNextToken();
     }
 
     return makeProgramAST(firstStatement);
