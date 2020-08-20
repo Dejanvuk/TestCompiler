@@ -23,9 +23,13 @@ AST* makeAssignmentAST (int,int, AST*);
 
 AST *makeConditionalAST(int, AST*, AST*);
 
+AST *makeWhileAST(AST*, AST*);
+
 AST* makePrimaryExpressionAST (int);
 
 int  getArithmeticOp(int);
+
+AST* whileStatement(int);
 
 AST* expressionStatement(int, int);
 

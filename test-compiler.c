@@ -21,7 +21,14 @@
 void intToStr(int number, char **result)
 {
     *result = malloc(((int)floor(log10(abs(number))) + 1));
-    sprintf(*result, "%d", number);
+    if(number == 0) {
+        *result = malloc(2 *sizeof(char));
+         sprintf(*result, "%d", 0);
+    }
+    else {
+        *result = malloc(((int)floor(log10(abs(number))) + 1));
+        sprintf(*result, "%d", number);
+    }
 }
 
 bool isLetter(int currChar)
@@ -203,7 +210,7 @@ enum
     TOK_GE,                   // '>='
     TOK_G,                    // '>'
     TOK_L,                    // '<'
-    TOK_LNOT,                  // '!' not yet implemented
+    TOK_LNOT,                 // '!' not yet implemented
     TOK_TYPE_SPECIFIER,       // 'int', 'double'
     TOK_ASSIGN,               // =
     TOK_IDENTIFIER,           // variable 16
@@ -217,7 +224,8 @@ enum
     TOK_ELSE,                 // 'else
     TOK_SMCL,                 // ';'
     TOK_COMMA,                // ,
-    TOK_RETURN                // 'return'
+    TOK_RETURN,               // 'return'
+    TOK_WHILE                 // 'while'
 };
 
 int precedenceTable[] = {
@@ -237,14 +245,14 @@ int precedenceTable[] = {
 };
 enum
 {
-    op_PROGRAM,
-    op_MOD,
-    op_DIV,
-    op_MULT,
-    op_PLUS,
-    op_MINUS,
-    op_DECLARE,
-    OP_ASSIGN,
+    op_PROGRAM, // 0
+    op_MOD,     // 1
+    op_DIV,     // 2
+    op_MULT,    // 3
+    op_PLUS,    // 4
+    op_MINUS,   // 5
+    op_DECLARE, // 6
+    OP_ASSIGN,  // 7
     op_IDENTIFIER,
     op_INT,
     op_RETURN,
@@ -255,9 +263,10 @@ enum
     op_GE,
     op_L,
     op_G,
-    op_IF, // 18
+    op_IF,     // 18
     op_ELSEIF, // 19
-    op_ELSE // 20
+    op_ELSE,   // 20
+    op_WHILE   // 21
 };
 
 int getTypeSpecifier(char *type)
@@ -655,12 +664,20 @@ AST *makeFunctionCallAST(int symbolIndex, AST *mid)
 
 /*
 left -> conditional expression
-mid -> statements insidede of if()
-right -> either else if or else conditional or null
+mid -> statements inside of if()
 */
 AST *makeConditionalAST(int op, AST *left, AST *mid)
 {
     return makeAST(op, -1, left, mid, NULL, false);
+};
+
+/*
+left -> conditional expression
+mid -> statements inside of while()
+*/
+AST *makeWhileAST(AST *left, AST *mid)
+{
+    return makeAST(op_WHILE, -1, left, mid, NULL, false);
 };
 
 /* 
@@ -788,9 +805,9 @@ void getNextToken()
         {
             currToken.token = TOK_ELSE;
         }
-        else if (!strcmp(currString, "else if"))
+        else if (!strcmp(currString, "while"))
         {
-            currToken.token = TOK_ELSE_IF;
+            currToken.token = TOK_WHILE;
         }
         else
         { //it's an identifier
@@ -1210,7 +1227,8 @@ AST *declareStatement(int owner)
             AST *currStmtAst = statement(symbolIndex); // owner is the function
             if (firstStatementAst == NULL)
             {
-                if(currStmtAst->op == op_ELSE || currStmtAst->op == op_ELSEIF) {
+                if (currStmtAst->op == op_ELSE || currStmtAst->op == op_ELSEIF)
+                {
                     printf("error on line %d: expected if statement previously!", lineNumber);
                     exit(1);
                 }
@@ -1219,15 +1237,19 @@ AST *declareStatement(int owner)
             }
             else
             {
-                if(currStmtAst->op == op_ELSEIF && prevStatementAst->op != op_IF) {
-                    if(prevStatementAst->op != op_ELSEIF) {
+                if (currStmtAst->op == op_ELSEIF && prevStatementAst->op != op_IF)
+                {
+                    if (prevStatementAst->op != op_ELSEIF)
+                    {
 
                         printf("error: expected 'if' / 'else if' statement before 'else if'!");
                         exit(1);
                     }
                 }
-                if(currStmtAst->op == op_ELSE && prevStatementAst->op != op_ELSEIF ) {
-                    if(prevStatementAst->op != op_IF) {
+                if (currStmtAst->op == op_ELSE && prevStatementAst->op != op_ELSEIF)
+                {
+                    if (prevStatementAst->op != op_IF)
+                    {
 
                         printf("error: expected 'if' / 'else if' statement before 'else'!");
                         exit(1);
@@ -1287,13 +1309,14 @@ AST *conditionalStatement(int owner)
     else if (accept(TOK_ELSE))
     {
         getNextToken();
-        if(accept(TOK_CURLY_BRACKET_OPEN)) {
+        if (accept(TOK_CURLY_BRACKET_OPEN))
+        {
             op = op_ELSE;
         }
-        else if(accept(TOK_IF)) {
+        else if (accept(TOK_IF))
+        {
             op = op_ELSEIF;
         }
-
     }
 
     AST *expr = NULL;
@@ -1346,6 +1369,62 @@ AST *conditionalStatement(int owner)
 
     // we don't have to get the next token as we already read it above if needed
     return makeConditionalAST(op, expr, firstStatementAst);
+}
+
+AST *whileStatement(int owner)
+{
+    if (owner == 0)
+    { // program return is in main
+        printf("error on line %d: while statements can't be global!", lineNumber);
+        exit(1);
+    }
+
+    AST *expr = NULL;
+    AST *firstStatementAst = NULL;
+    AST *prevStatementAst = NULL;
+
+    getNextToken(); // expect '('
+
+    if (!accept(TOK_ROUND_BRACKET_OPEN))
+    {
+        printf("error on line %d: expected '(' !", lineNumber);
+        exit(1);
+    }
+
+    // read the expression ast
+    getNextToken();
+    expr = expressionStatement(5, owner);
+
+    getNextToken(); // read the ')'
+
+    if (!accept(TOK_CURLY_BRACKET_OPEN))
+    {
+        printf("error on line %d: expected '{' !", lineNumber);
+        exit(1);
+    }
+
+    // read the statements inside the block
+
+    getNextToken();
+
+    while (currToken.token != TOK_CURLY_BRACKET_CLOSE)
+    {
+        AST *currStmtAst = statement(owner);
+        if (firstStatementAst == NULL)
+        {
+            firstStatementAst = currStmtAst;
+            prevStatementAst = currStmtAst;
+        }
+        else
+        {
+            prevStatementAst->right = currStmtAst;
+            prevStatementAst = currStmtAst;
+        }
+    }
+
+    getNextToken(); // start next statement
+
+    return makeWhileAST(expr, firstStatementAst);
 }
 
 AST *returnStatement(int owner)
@@ -1492,6 +1571,10 @@ AST *statement(int owner)
     { // return statement
         return returnStatement(owner);
     }
+    else if (currToken.token == TOK_WHILE)
+    {
+        return whileStatement(owner);
+    }
     else
     {
         printf("error on line %d: invalid token; expected a statement", lineNumber);
@@ -1555,14 +1638,15 @@ int getAvailableRegister()
     return -1; // no available register, use stack
 }
 
-
-int getNewLabel() {
+int getNewLabel()
+{
     jmpLabels++;
     return jmpLabels;
 }
 
-char* makeLabel(int label) {
-    char* ret = malloc(32 * sizeof(char));
+char *makeLabel(int label)
+{
+    char *ret = malloc(32 * sizeof(char));
     sprintf(ret, ".L%d", label);
     return ret;
 }
@@ -1691,14 +1775,15 @@ void asm_comm_Write(char *name, char *size, char *alignment)
     fprintf(ofptr, "\n\t%s %s,%s,%s", assemblerDirectives[4], name, size, alignment);
 }
 
-void asm_cmp_write(char *destName, char *fromName) {
+void asm_cmp_write(char *destName, char *fromName)
+{
     fprintf(ofptr, "\n\t%s %s, %s", controlFlowInstructions[8], destName, fromName);
 }
 
-void asm_jmp_write(char* instruction, char* label) {
+void asm_jmp_write(char *instruction, char *label)
+{
     fprintf(ofptr, "\n\t%s %s", instruction, label);
 }
-
 
 /* Helper functions for code generation */
 void asm_functionPreamble(char *functionName)
@@ -1812,15 +1897,19 @@ int parsePrimaryAst(AST *ast, int owner)
     return reg;
 }
 
-int parseArithmeticTree(AST *ast, int owner)
+/*
+cond: 0 for if/else-if/else 1 for while/for -1 any other expr that doesnt contain booleans
+cLabel: custom label we will jump to , used for for/while loops, -1 for any other non-loop expr
+*/
+int parseArithmeticTree(AST *ast, int owner, int cond, int cLabel)
 {
     if (ast->left == NULL)
     {
         return parsePrimaryAst(ast, owner);
     }
 
-    int leftReg = parseArithmeticTree(ast->left, owner);
-    int rightReg = parseArithmeticTree(ast->right, owner);
+    int leftReg = parseArithmeticTree(ast->left, owner, cond, -1);
+    int rightReg = parseArithmeticTree(ast->right, owner, cond, -1);
 
     if (ast->op == op_MOD)
     { // not yet implemented
@@ -1857,10 +1946,12 @@ int parseArithmeticTree(AST *ast, int owner)
     else if (ast->op == op_LE || ast->op == op_L || ast->op == op_GE || ast->op == op_G || ast->op == op_EQUAL || ast->op == op_NEQUAL)
     {
         asm_cmp_write(addedPurposeRegisters[leftReg], addedPurposeRegisters[rightReg]);
-        int label = getNewLabel(); // the label where the else/else if occur
         int instruction = -1;
-        
-        switch(ast->op) {
+
+        if (cond == 0) { // if/else-if/else
+            int label = getNewLabel(); // the label where the else/else if occur
+            switch (ast->op)
+            {
             case op_LE:
                 instruction = 4;
                 break;
@@ -1879,12 +1970,45 @@ int parseArithmeticTree(AST *ast, int owner)
             case op_NEQUAL:
                 instruction = 1;
                 break;
-        }
+            }
 
-        asm_jmp_write(controlFlowInstructions[instruction], makeLabel(label));
-        availableAddedPurposeRegisters[leftReg] = 0;
-        availableAddedPurposeRegisters[rightReg] = 0;
-        return label;
+            asm_jmp_write(controlFlowInstructions[instruction], makeLabel(label));
+            availableAddedPurposeRegisters[leftReg] = 0;
+            availableAddedPurposeRegisters[rightReg] = 0;
+            return label;
+        }
+        else if (cond == 1){ // for/while
+            switch (ast->op)
+            {
+            case op_LE:
+                instruction = 7;
+                break;
+            case op_L:
+                instruction = 6;
+                break;
+            case op_GE:
+                instruction = 5;
+                break;
+            case op_G:
+                instruction = 4;
+                break;
+            case op_EQUAL:
+                instruction = 1;
+                break;
+            case op_NEQUAL:
+                instruction = 2;
+                break;
+            }
+
+            asm_jmp_write(controlFlowInstructions[instruction], makeLabel(cLabel));
+            availableAddedPurposeRegisters[leftReg] = 0;
+            availableAddedPurposeRegisters[rightReg] = 0;
+            return cLabel;
+        }
+        else {
+            printf("error: expr can't contain boolean operators!");
+            exit(1);
+        }
     }
 
     else
@@ -2027,7 +2151,7 @@ void parseDeclarationAst(AST *ast, int owner)
         { // variable
             if (ast->left)
             { // initialized
-                int resultReg = parseArithmeticTree(ast->left, owner);
+                int resultReg = parseArithmeticTree(ast->left, owner, -1, -1);
                 printf("\nlocal: register that has the expr val:%s", addedPurposeRegisters[resultReg]);
                 char destOperand[32];
                 char *srcOperand = addedPurposeRegisters[resultReg];
@@ -2085,7 +2209,7 @@ void parseAssignAst(AST *ast, int owner)
     }
     else if (e->scope == 1)
     { // local
-        int resultReg = parseArithmeticTree(ast->left, owner);
+        int resultReg = parseArithmeticTree(ast->left, owner, -1, -1);
         printf("\nassignment: register that has the expr val:%s", addedPurposeRegisters[resultReg]);
         srcOperand = addedPurposeRegisters[resultReg];
 
@@ -2099,7 +2223,7 @@ void parseAssignAst(AST *ast, int owner)
     else if (e->scope == 2)
     { // parameter
 
-        int resultReg = parseArithmeticTree(ast->left, owner);
+        int resultReg = parseArithmeticTree(ast->left, owner, -1, -1);
         printf("\nassignment: register that has the expr val:%s", addedPurposeRegisters[resultReg]);
         srcOperand = addedPurposeRegisters[resultReg];
 
@@ -2131,7 +2255,7 @@ void parseReturnAst(AST *ast, int owner)
     char *destOperand = generalPurposeRegisters[0]; // rax
     char *srcOperand = NULL;
 
-    int resultReg = parseArithmeticTree(ast->left, owner);
+    int resultReg = parseArithmeticTree(ast->left, owner, -1, -1);
     printf("\nreturn: register that has the expr val:%s", addedPurposeRegisters[resultReg]);
     srcOperand = addedPurposeRegisters[resultReg];
     asm_mov_write(destOperand, srcOperand);
@@ -2229,10 +2353,11 @@ void parseFunctionCallAst(AST *ast, int owner)
     }
 }
 
-int parseConditionalAst(AST* ast,int lastLabelNr, int owner) {
+int parseConditionalAst(AST *ast, int lastLabelNr, int owner)
+{
     int label = -1;
-    if(ast->left) // if it's not an 'else' or it's an 'else-if' without any 'else-if' / 'else' conditional following
-        label = parseArithmeticTree(ast->left, owner); // returns the label of the next conditional
+    if (ast->left)                                        // if it's not an 'else' or it's an 'else-if' without any 'else-if' / 'else' conditional following
+        label = parseArithmeticTree(ast->left, owner, 0, -1); // returns the label of the next conditional
     else
         label = lastLabelNr;
 
@@ -2240,25 +2365,28 @@ int parseConditionalAst(AST* ast,int lastLabelNr, int owner) {
     AST *currStatement = ast->mid;
     int status = parseStatements(currStatement, owner);
 
-    // add jmp to end of conditionals if it's not an 'else' conditional   
+    // add jmp to end of conditionals if it's not an 'else' conditional
     // or conditional didn't contain a return statement inside
-    if(ast->left && status != -1 ) {
+    if (ast->left && status != -1)
+    {
         //  it's pointless to jmp when the last conditional is an 'else-if'
-        if(ast->right && (ast->right->op == op_ELSE || ast->right->op == op_ELSEIF))
+        if (ast->right && (ast->right->op == op_ELSE || ast->right->op == op_ELSEIF))
             asm_jmp_write(controlFlowInstructions[0], makeLabel(lastLabelNr));
     }
-    
+
     return label;
 }
 
-void parseConditionalsAst(AST** ast,int owner) {
+void parseConditionalsAst(AST **ast, int owner)
+{
     // first get the number of 'if''else if' 'else' branches to know how many labels to generate
     // because we will need the last conditional's label to jmp to
-    // last label is the one after all conditional statements 
+    // last label is the one after all conditional statements
     int count = 1;
 
-    AST* currAst = (*ast)->right;
-    while(currAst != NULL && (currAst->op == op_ELSEIF || currAst->op == op_ELSE)) {
+    AST *currAst = (*ast)->right;
+    while (currAst != NULL && (currAst->op == op_ELSEIF || currAst->op == op_ELSE))
+    {
         count++;
         currAst = currAst->right;
     }
@@ -2267,14 +2395,32 @@ void parseConditionalsAst(AST** ast,int owner) {
 
     // parse each conditional
     currAst = (*ast);
-    do {
+    do
+    {
         int nextLabel = parseConditionalAst(currAst, lastLabelNr, owner);
         fprintf(ofptr, "\n%s:", makeLabel(nextLabel));
         currAst = currAst->right;
-    }
-    while(currAst != NULL && (currAst->op == op_ELSEIF || currAst->op == op_ELSE));
+    } while (currAst != NULL && (currAst->op == op_ELSEIF || currAst->op == op_ELSE));
 
     *ast = currAst;
+}
+
+void parseWhileAst(AST *ast, int owner)
+{
+    int condLabel = getNewLabel();
+    asm_jmp_write(controlFlowInstructions[0], makeLabel(condLabel));
+
+    // parse the statements inside first
+    int label = getNewLabel();
+    fprintf(ofptr, "\n%s:", makeLabel(label));
+
+    AST *currStatement = ast->mid;
+    parseStatements(currStatement, owner);
+
+    // parse the expression
+    fprintf(ofptr, "\n%s:", makeLabel(condLabel));
+    parseArithmeticTree(ast->left, owner, 1, label);
+
 }
 
 int parseStatements(AST *ast, int owner)
@@ -2301,6 +2447,10 @@ int parseStatements(AST *ast, int owner)
             break;
         case op_IF:
             parseConditionalsAst(&ast, owner);
+            break;
+        case op_WHILE:
+            parseWhileAst(ast, owner);
+            ast = ast->right;
             break;
         default:
             printf("error: invalid statement AST! expected %s or %s", "op_DECLARE", "op_ASSIGN");

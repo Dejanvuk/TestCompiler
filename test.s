@@ -31,53 +31,37 @@ foo:
 main:
 	push	rbp
 	mov	rbp, rsp
-	sub rsp, 24
-	mov r8, 7
+	sub rsp, 40
+	mov r8, 0
 	mov -8[rbp], r8
-	mov r8, 44
-	mov -24[rbp], r8
-	mov r8, -8[rbp]
-	mov r9, 7
-	cmp r8, r9
-	je .L2
 	mov r8, 1
 	mov -16[rbp], r8
-	mov r8, -16[rbp]
-	mov rax, r8                               # place the return into rax
-	mov	rsp, rbp
-	pop	rbp
-	ret
-.L2:
-	mov r8, -8[rbp]
-	mov r9, 6
-	cmp r8, r9
-	jg .L3
-	mov r8, 2
-	mov -16[rbp], r8
-	mov r8, 46
+	mov r8, 0
 	mov -24[rbp], r8
-	jmp .L6
+	mov r8, 3
+	mov -32[rbp], r8
+	mov r8, 10
+	mov -40[rbp], r8
+	jmp .L2
 .L3:
 	mov r8, -8[rbp]
-	mov r9, 9
-	cmp r8, r9
-	jle .L4
-	mov r8, 3
-	mov -16[rbp], r8
-	jmp .L6
-.L4:
-	mov r8, -8[rbp]
-	mov r9, 7
-	cmp r8, r9
-	jne .L5
-	mov r8, 4
-	mov -16[rbp], r8
-	jmp .L6
-.L5:
-	mov r8, 66
-	mov -16[rbp], r8
-.L6:
+	mov r9, -16[rbp]
+	add r8, r9
+	mov -24[rbp], r8
 	mov r8, -16[rbp]
+	mov -8[rbp], r8
+	mov r8, -24[rbp]
+	mov -16[rbp], r8
+	mov r8, -32[rbp]
+	mov r9, 1
+	add r8, r9
+	mov -32[rbp], r8
+.L2:
+	mov r8, -32[rbp]
+	mov r9, -40[rbp]
+	cmp r8, r9
+	jle .L3
+	mov r8, -24[rbp]
 	mov rax, r8                               # place the return into rax
 	mov	rsp, rbp
 	pop	rbp

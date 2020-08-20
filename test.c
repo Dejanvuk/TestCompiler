@@ -6,27 +6,18 @@ int foo(int first) {
 }
 
 int main(int argc, int argv) {
-    int firsta = 7;
-    int g;
-    int f = 44;
-    if(firsta != 7) {
-        g = 1;
-        return g;
-        f = 45;
+    int f1 = 0;
+    int f2 = 1;
+    int f3 = 0;
+    int i = 3;
+    int len = 10;
+    while(i<=len)           
+    {
+        f3=f1+f2;                     
+        f1=f2;
+        f2=f3;
+        i=i+1;                  
     }
-    else if(firsta <= 6) {
-        g = 2;
-        f = 46;
-    }
-    else if(firsta > 9) {
-        g = 3;
-    }
-    else if(firsta == 7){
-        g = 4;
-    }
-    else {
-        g = 66;
-    }
-    return g;
-}
 
+    return f3;
+}

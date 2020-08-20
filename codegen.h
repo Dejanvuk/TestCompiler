@@ -1,5 +1,5 @@
 #include "ast.h"
-int parseArithmeticTree(AST*, int);
+int parseArithmeticTree(AST*, int, int, int);
 int optimized_parseArithmeticTree(AST*);
 void parseDeclarationAst(AST*, int);
 void parseAssignAst(AST*, int);
