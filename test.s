@@ -32,7 +32,7 @@ main:
 	push	rbp
 	mov	rbp, rsp
 	sub rsp, 24
-	mov r8, 8
+	mov r8, 7
 	mov -8[rbp], r8
 	mov r8, 44
 	mov -24[rbp], r8
@@ -44,9 +44,9 @@ main:
 	mov -16[rbp], r8
 	mov r8, -16[rbp]
 	mov rax, r8                               # place the return into rax
-	mov r8, 45
-	mov -24[rbp], r8
-	jmp .L5
+	mov	rsp, rbp
+	pop	rbp
+	ret
 .L2:
 	mov r8, -8[rbp]
 	mov r9, 6
@@ -56,7 +56,7 @@ main:
 	mov -16[rbp], r8
 	mov r8, 46
 	mov -24[rbp], r8
-	jmp .L5
+	jmp .L6
 .L3:
 	mov r8, -8[rbp]
 	mov r9, 9
@@ -64,7 +64,7 @@ main:
 	jle .L4
 	mov r8, 3
 	mov -16[rbp], r8
-	jmp .L5
+	jmp .L6
 .L4:
 	mov r8, -8[rbp]
 	mov r9, 7
@@ -72,8 +72,11 @@ main:
 	jne .L5
 	mov r8, 4
 	mov -16[rbp], r8
-	jmp .L5
+	jmp .L6
 .L5:
+	mov r8, 66
+	mov -16[rbp], r8
+.L6:
 	mov r8, -16[rbp]
 	mov rax, r8                               # place the return into rax
 	mov	rsp, rbp

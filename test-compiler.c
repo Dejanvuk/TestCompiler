@@ -2004,8 +2004,6 @@ void parseDeclarationAst(AST *ast, int owner)
             AST *currStatement = ast->mid;
             parseStatements(currStatement, e->index);
 
-            asm_functionPostamble();
-
             // unrestrict r* r9 if they were used to pass arguments
             if (nrOfArguments == 5)
             {
@@ -2140,6 +2138,8 @@ void parseReturnAst(AST *ast, int owner)
     fprintf(ofptr, "                               # place the return into rax");
     availableGeneralPurposeRegisters[0] = 0; // make rax available again
     availableAddedPurposeRegisters[resultReg] = 0;
+
+    asm_functionPostamble();
 }
 
 /* 
@@ -2238,13 +2238,16 @@ int parseConditionalAst(AST* ast,int lastLabelNr, int owner) {
 
     // parse each statement inside of the conditional
     AST *currStatement = ast->mid;
-    parseStatements(currStatement, owner);
+    int status = parseStatements(currStatement, owner);
 
-    // add jmp to end of conditionals 
-    if(ast->right) {
-        asm_jmp_write(controlFlowInstructions[0], makeLabel(lastLabelNr));
+    // add jmp to end of conditionals if it's not an 'else' conditional   
+    // or conditional didn't contain a return statement inside
+    if(ast->left && status != -1 ) {
+        //  it's pointless to jmp when the last conditional is an 'else-if'
+        if(ast->right && (ast->right->op == op_ELSE || ast->right->op == op_ELSEIF))
+            asm_jmp_write(controlFlowInstructions[0], makeLabel(lastLabelNr));
     }
-
+    
     return label;
 }
 
@@ -2274,7 +2277,7 @@ void parseConditionalsAst(AST** ast,int owner) {
     *ast = currAst;
 }
 
-void parseStatements(AST *ast, int owner)
+int parseStatements(AST *ast, int owner)
 {
     while (ast != NULL)
     {
@@ -2290,8 +2293,8 @@ void parseStatements(AST *ast, int owner)
             break;
         case op_RETURN:
             parseReturnAst(ast, owner);
-            ast = ast->right;
-            break;
+            ast = NULL;
+            return -1;
         case op_FCALL:
             parseFunctionCallAst(ast, owner);
             ast = ast->right;
@@ -2304,6 +2307,8 @@ void parseStatements(AST *ast, int owner)
             exit(1);
         }
     }
+
+    return 1;
 }
 
 void parseProgramAst(AST *ast)

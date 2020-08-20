@@ -11,6 +11,7 @@ int main(int argc, int argv) {
     int f = 44;
     if(firsta != 7) {
         g = 1;
+        return g;
         f = 45;
     }
     else if(firsta <= 6) {
@@ -22,6 +23,9 @@ int main(int argc, int argv) {
     }
     else if(firsta == 7){
         g = 4;
+    }
+    else {
+        g = 66;
     }
     return g;
 }
