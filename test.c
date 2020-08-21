@@ -11,12 +11,11 @@ int main(int argc, int argv) {
     int f = 44;
     while(firsta < 9) {
         firsta = firsta + 1;
-        break;
+        continue;
         g = 77;
     }
 
     if(firsta == 10) {
-        break;
         f = 99;
     }
     else {

@@ -663,6 +663,10 @@ AST* makeBreakAst() {
     return makeChildlessAST(op_BREAK, -1);
 }
 
+AST* makeContinueAst() {
+    return makeChildlessAST(op_CONTINUE, -1);
+}
+
 /* 
 symbolIndex: function index in the global table
 mid -> arguments
@@ -825,7 +829,7 @@ void getNextToken()
         }
         else if (!strcmp(currString, "continue"))
         {
-            currToken.token = TOK_BREAK;
+            currToken.token = TOK_CONTINUE;
         }
         else
         { //it's an identifier
@@ -1502,6 +1506,26 @@ AST* breakStatement(int owner) {
     return makeBreakAst();
 }
 
+AST* continueStatement(int owner) {
+    if (owner == 0)
+    { // program return is in main
+        printf("error on line %d: continue can't be used outside of conditional blocks!\n", lineNumber);
+        exit(1);
+    }
+
+    getNextToken();
+
+    if (!accept(TOK_SMCL))
+    {
+        printf("error on line %d: statement must end in ';' !\n", lineNumber);
+        exit(1);
+    }
+
+    getNextToken(); // read the next token for the next statement
+
+    return makeContinueAst();
+}
+
 AST *functionCall(int owner)
 {
     // get back the identifier index
@@ -1616,6 +1640,10 @@ AST *statement(int owner)
     else if (currToken.token == TOK_BREAK)
     {
         return breakStatement(owner);
+    }
+    else if (currToken.token == TOK_CONTINUE)
+    {
+        return continueStatement(owner);
     }
     else
     {
@@ -2414,6 +2442,10 @@ int parseConditionalAst(AST *ast, int lastLabelNr, int owner)
         printf("error: break may only be used inside a loop or a switch!");
         exit(1);
     }
+    else if(status == -3) {
+        printf("error: while may only be used inside a loop or a switch!");
+        exit(1);
+    }
 
     // add jmp to end of conditionals if it's not an 'else' conditional
     // or conditional didn't contain a return statement inside
@@ -2461,8 +2493,8 @@ void parseWhileAst(AST *ast, int owner)
     asm_jmp_write(controlFlowInstructions[0], makeLabel(condLabel));
 
     // parse the statements inside first
-    int label = getNewLabel();
-    int followingLabel = getNewLabel();
+    int label = getNewLabel(); // the label where the loop starts
+    int followingLabel = getNewLabel(); // the label where the loop ends
     fprintf(ofptr, "\n%s:", makeLabel(label));
 
     AST *currStatement = ast->mid;
@@ -2474,6 +2506,10 @@ void parseWhileAst(AST *ast, int owner)
     else if(status == -2) { // break statement
         asm_jmp_write(controlFlowInstructions[0], makeLabel(followingLabel));
         fprintf(ofptr, "                               # break out of while loop");
+    }
+    else if(status == -3) { // continue statement
+        asm_jmp_write(controlFlowInstructions[0], makeLabel(label));
+        fprintf(ofptr, "                               # continue next loop");
     }
 
     // parse the expression
@@ -2506,6 +2542,9 @@ int parseStatements(AST *ast, int owner)
         case op_BREAK:
             ast = NULL;
             return -2;
+        case op_CONTINUE:
+            ast = NULL;
+            return -3;
         case op_FCALL:
             parseFunctionCallAst(ast, owner);
             ast = ast->right;

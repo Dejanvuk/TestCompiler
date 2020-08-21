@@ -44,7 +44,7 @@ main:
 	mov r9, 1
 	add r8, r9
 	mov -8[rbp], r8
-	jmp .L4                               # break out of while loop
+	jmp .L3                               # continue next loop
 .L2:
 	mov r8, -8[rbp]
 	mov r9, 9
