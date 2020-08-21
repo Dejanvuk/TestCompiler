@@ -25,6 +25,8 @@ AST *makeConditionalAST(int, AST*, AST*);
 
 AST *makeWhileAST(AST*, AST*);
 
+AST* makeBreakAst();
+
 AST* makePrimaryExpressionAST (int);
 
 int  getArithmeticOp(int);
@@ -40,6 +42,8 @@ AST* assignmentStatement(int);
 AST* conditionalStatement(int);
 
 AST* returnStatement(int);
+
+AST* breakStatement(int);
 
 AST* functionCall(int);
 

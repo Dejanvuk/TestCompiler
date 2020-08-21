@@ -10,6 +10,8 @@
 #include "parser.h"
 #include "codegen.h"
 
+#include <sys/utsname.h>
+
 #define isDigit(X) ((X) >= '0' && (X) <= '9' ? true : false)
 
 #define isSpace(X) ((X) == ' ' ? true : false)
@@ -225,7 +227,9 @@ enum
     TOK_SMCL,                 // ';'
     TOK_COMMA,                // ,
     TOK_RETURN,               // 'return'
-    TOK_WHILE                 // 'while'
+    TOK_WHILE,                 // 'while'
+    TOK_BREAK,                 // 'break'
+    TOK_CONTINUE                // 'continue'
 };
 
 int precedenceTable[] = {
@@ -266,7 +270,9 @@ enum
     op_IF,     // 18
     op_ELSEIF, // 19
     op_ELSE,   // 20
-    op_WHILE   // 21
+    op_WHILE,   // 21
+    op_BREAK,   // 22
+    op_CONTINUE // 23
 };
 
 int getTypeSpecifier(char *type)
@@ -653,6 +659,10 @@ AST *makeReturnAST(AST *left)
     return makeAST(op_RETURN, 0, left, NULL, NULL, false);
 };
 
+AST* makeBreakAst() {
+    return makeChildlessAST(op_BREAK, -1);
+}
+
 /* 
 symbolIndex: function index in the global table
 mid -> arguments
@@ -808,6 +818,14 @@ void getNextToken()
         else if (!strcmp(currString, "while"))
         {
             currToken.token = TOK_WHILE;
+        }
+        else if (!strcmp(currString, "break"))
+        {
+            currToken.token = TOK_BREAK;
+        }
+        else if (!strcmp(currString, "continue"))
+        {
+            currToken.token = TOK_BREAK;
         }
         else
         { //it's an identifier
@@ -1454,7 +1472,7 @@ AST *returnStatement(int owner)
     { // return a variable
         if (functionEntry->type_specifier != 0)
         {
-            printf("error on line %d: incompatible return type specifier!", lineNumber); // later we will check the return for overflow, imcompatible casts, pointer from literal etc
+            printf("error on line %d: incompatible return type specifier!\n", lineNumber); // later we will check the return for overflow, imcompatible casts, pointer from literal etc
             exit(1);
         }
     }
@@ -1462,6 +1480,26 @@ AST *returnStatement(int owner)
     getNextToken(); // read the next token for the next statement
 
     return makeReturnAST(expr);
+}
+
+AST* breakStatement(int owner) {
+    if (owner == 0)
+    { // program return is in main
+        printf("error on line %d: break can't be used outside of conditional blocks!\n", lineNumber);
+        exit(1);
+    }
+
+    getNextToken();
+
+    if (!accept(TOK_SMCL))
+    {
+        printf("error on line %d: statement must end in ';' !\n", lineNumber);
+        exit(1);
+    }
+
+    getNextToken(); // read the next token for the next statement
+
+    return makeBreakAst();
 }
 
 AST *functionCall(int owner)
@@ -1574,6 +1612,10 @@ AST *statement(int owner)
     else if (currToken.token == TOK_WHILE)
     {
         return whileStatement(owner);
+    }
+    else if (currToken.token == TOK_BREAK)
+    {
+        return breakStatement(owner);
     }
     else
     {
@@ -2368,6 +2410,11 @@ int parseConditionalAst(AST *ast, int lastLabelNr, int owner)
     AST *currStatement = ast->mid;
     int status = parseStatements(currStatement, owner);
 
+    if(status == -2) { // break
+        printf("error: break may only be used inside a loop or a switch!");
+        exit(1);
+    }
+
     // add jmp to end of conditionals if it's not an 'else' conditional
     // or conditional didn't contain a return statement inside
     if (ast->left && status != -1)
@@ -2415,16 +2462,28 @@ void parseWhileAst(AST *ast, int owner)
 
     // parse the statements inside first
     int label = getNewLabel();
+    int followingLabel = getNewLabel();
     fprintf(ofptr, "\n%s:", makeLabel(label));
 
     AST *currStatement = ast->mid;
-    parseStatements(currStatement, owner);
+    int status = parseStatements(currStatement, owner);
+
+    if(status == -1) { // return statement
+
+    }
+    else if(status == -2) { // break statement
+        asm_jmp_write(controlFlowInstructions[0], makeLabel(followingLabel));
+        fprintf(ofptr, "                               # break out of while loop");
+    }
 
     // parse the expression
     fprintf(ofptr, "\n%s:", makeLabel(condLabel));
     parseArithmeticTree(ast->left, owner, 1, label);
 
+    fprintf(ofptr, "\n%s:", makeLabel(followingLabel));
+    fprintf(ofptr, "                               # the next statements after the while's block");
 }
+
 
 int parseStatements(AST *ast, int owner)
 {
@@ -2444,6 +2503,9 @@ int parseStatements(AST *ast, int owner)
             parseReturnAst(ast, owner);
             ast = NULL;
             return -1;
+        case op_BREAK:
+            ast = NULL;
+            return -2;
         case op_FCALL:
             parseFunctionCallAst(ast, owner);
             ast = ast->right;
@@ -2489,6 +2551,17 @@ void writePreamble()
     lastAssemblerDirective = assemblerDirectives[19];
 }
 
+void writePostamble() {
+    struct utsname unameData;
+    if(uname(&unameData)) {
+        printf("error getting user info!\n");
+        exit(1);
+    }
+
+    fprintf(ofptr, "\n\t.ident\t\"TC: %s %s\"",unameData.sysname, unameData.version);
+    fprintf(ofptr, "\n");
+}
+
 /** 
  * 
  * ====================/CODE GENERATION====================
@@ -2527,6 +2600,6 @@ int main(int argc, char **argv)
 
     writePreamble();
     parseProgramAst(parser());
-
+    writePostamble();
     cleanUp();
 }
