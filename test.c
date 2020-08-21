@@ -6,18 +6,20 @@ int foo(int first) {
 }
 
 int main(int argc, int argv) {
-    int f1 = 0;
-    int f2 = 1;
-    int f3 = 0;
-    int i = 3;
-    int len = 10;
-    while(i<=len)           
-    {
-        f3=f1+f2;                     
-        f1=f2;
-        f2=f3;
-        i=i+1;                  
+    int firsta = 7;
+    int g;
+    int f = 44;
+    while(firsta <= 9) {
+        firsta = firsta + 1;
     }
 
-    return f3;
+    if(firsta == 10) {
+        f = 99;
+    }
+    else {
+        f = 45;
+    }
+
+    return f;
 }
+

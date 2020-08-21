@@ -1584,6 +1584,9 @@ AST *statement(int owner)
 
 AST *program()
 {
+    // ad the program owner to symbol table 
+    addSymbolEntry(SymbolTable, &symbolTableIndex, "program", "program-specifier", -1, -1, -1);
+
     AST *firstStatement = NULL;
     AST *prevStatement = NULL;
     while (currToken.token != TOK_EOF)
