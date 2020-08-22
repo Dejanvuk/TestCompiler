@@ -2336,6 +2336,12 @@ void parseReturnAst(AST *ast, int owner)
     availableGeneralPurposeRegisters[0] = 0; // make rax available again
     availableAddedPurposeRegisters[resultReg] = 0;
 
+    // if inside 'main' function print the return
+    ENTRY* functionEntry = lookupSymbol(SymbolTable, owner);
+    if(!strcmp(functionEntry->name, "main")) {
+        fprintf(ofptr, "\n\tmov\tesi, eax\r\n\tlea\trdi, .LC0[rip]\r\n\tmov\teax, 0\r\n\tcall\tprintf@PLT");
+    }
+
     asm_functionPostamble();
 }
 
@@ -2586,7 +2592,8 @@ void writePreamble()
         exit(1);
     }
     // 'intel_syntax noprefix' forces the GNU Assembler to not require % for registers
-    fprintf(ofptr, "\t.file\t\"%s\"\r\n\t.intel_syntax noprefix\n\t.text", sourceFileName);
+
+    fprintf(ofptr, "\t.file\t\"%s\"\r\n\t.intel_syntax noprefix\n\t.section\t.rodata\r\n.LC0:\r\n\t.string\t\"%%d\\n\"\n\t.text", sourceFileName);
     lastAssemblerDirective = assemblerDirectives[19];
 }
 
